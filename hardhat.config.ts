@@ -5,6 +5,8 @@ import "@nomicfoundation/hardhat-network-helpers";
 import * as dotenv from "dotenv";
 import type { HardhatUserConfig } from "hardhat/config";
 
+import "./tasks/live-flow";
+import "./tasks/megapot";
 
 dotenv.config();
 
