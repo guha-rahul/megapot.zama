@@ -1,0 +1,17 @@
+node_modules/
+artifacts/
+artifacts-megapot/
+cache/
+cache-megapot/
+coverage/
+coverage.json
+typechain-types/
+fhevmTemp/
+
+.env
+*.log
+
+deployments/localhost.json
+deployments/hardhat.json
+
+.DS_Store
