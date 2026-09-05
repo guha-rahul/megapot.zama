@@ -41,6 +41,9 @@ async function publicDecrypt(hre: HardhatRuntimeEnvironment, handle: string) {
   return { value: BigInt(Object.values(res.clearValues)[0] as bigint), proof: res.decryptionProof };
 }
 
+/** The demo drives the main prize; the Megapot track has its own lifecycle. */
+const MAIN = 0;
+
 task("megapot:live-flow", "Run deposit → round → draw → claim against a live network")
   .addOptionalParam("amount", "USDC to deposit from the deployer", "5", types.string)
   .addOptionalParam("prize", "USDC to seed the prize with (stands in for yield on testnet)", "1", types.string)
@@ -89,16 +92,16 @@ task("megapot:live-flow", "Run deposit → round → draw → claim against a li
 
     // ---------------------------------------------------------------- 3
     step(3, "Opening a round and closing entries");
-    const roundId = Number(await pot.roundsLength());
+    const roundId = Number(await pot.roundsLength(MAIN));
     const drawTime = Math.floor(Date.now() / 1000) + 30;
-    await (await pot.startRound(drawTime)).wait();
-    await (await pot.closeEntries(roundId)).wait();
+    await (await pot.startRound(MAIN, drawTime)).wait();
+    await (await pot.closeEntries(MAIN, roundId)).wait();
 
-    const snapshot = (await pot.getRound(roundId)).cursorSnapshot;
+    const snapshot = (await pot.getRound(MAIN, roundId)).cursorSnapshot;
     console.log(`    cursor handle ${snapshot}`);
     console.log("    asking the KMS to publicly decrypt the aggregate…");
     const entries = await publicDecrypt(hre, snapshot);
-    await (await pot.finalizeEntries(roundId, entries.value, entries.proof)).wait();
+    await (await pot.finalizeEntries(MAIN, roundId, entries.value, entries.proof)).wait();
     console.log(`    ${usd(entries.value)} tickets in play (verified on-chain against a real KMS signature)`);
 
     // ---------------------------------------------------------------- 4
@@ -106,7 +109,7 @@ task("megapot:live-flow", "Run deposit → round → draw → claim against a li
     // On testnet there is no ERC-4626 USDC venue to skim, so the prize is funded directly.
     // On mainnet this is what `harvest()` and the Megapot winnings round-trip do.
     await (await usdc.approve(d.megaPot, prize)).wait();
-    await (await pot.fundPrize(prize)).wait();
+    await (await pot.fundPrize(MAIN, prize)).wait();
     console.log(`    prize reserve ${usd(await pot.prizeReserve())} USDC`);
 
     // ---------------------------------------------------------------- 5
@@ -115,15 +118,15 @@ task("megapot:live-flow", "Run deposit → round → draw → claim against a li
       await new Promise((r) => setTimeout(r, 5000));
       process.stdout.write(".");
     }
-    await (await pot.draw(roundId, args.claimWindow)).wait();
-    const round = await pot.getRound(roundId);
+    await (await pot.draw(MAIN, roundId, args.claimWindow)).wait();
+    const round = await pot.getRound(MAIN, roundId);
     console.log(`\n    round ${roundId} drawn — prize ${usd(round.prize)} over ${usd(round.totalTickets)} tickets`);
     console.log(`    winning ticket ${round.ticket} (encrypted; nobody can read it)`);
 
     // ---------------------------------------------------------------- 6
     step(6, "Claiming");
     const before = await decryptMine(hre, await pot.confidentialBalanceOf(me.address), d.megaPot, me);
-    await (await pot.claim(roundId)).wait();
+    await (await pot.claim(MAIN, roundId)).wait();
     const after = await decryptMine(hre, await pot.confidentialBalanceOf(me.address), d.megaPot, me);
 
     console.log(
@@ -159,7 +162,7 @@ task("megapot:live-check", "Verify a live deployment is wired correctly").setAct
   console.log(`  bridge           ${await pot.bridge()}`);
   console.log(`  domain           ${await pot.megapotDomain()}`);
   console.log(`  agent            ${await pot.ticketAgent()}`);
-  console.log(`  spend            ${await pot.megapotSpendBps()} bps of yield`);
+  console.log(`  megapot share    ${await pot.megapotShareBps()} bps of the next harvest`);
 
   // The Zama coprocessor has to actually be reachable, not just configured.
   await hre.fhevm.initializeCLIApi();

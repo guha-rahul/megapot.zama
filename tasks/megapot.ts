@@ -40,7 +40,6 @@ task("megapot:deploy", "Deploy the confidential pool against live infrastructure
   .addOptionalParam("vault", "An ERC-4626 vault over that USDC to earn yield in (optional)")
   .addOptionalParam("keeper", "Keeper address (defaults to the deployer)")
   .addOptionalParam("agent", "MegapotTicketAgent address on Base, if already deployed")
-  .addOptionalParam("megapotBps", "Share of harvested yield played on Megapot (default 0 = off)")
   .setAction(async (args, hre) => {
     const { ethers } = hre;
     const chainId = Number((await ethers.provider.getNetwork()).chainId);
@@ -95,10 +94,6 @@ task("megapot:deploy", "Deploy the confidential pool against live infrastructure
       await (await megaPot.setMegapotRoute(cctp.tokenMessenger, DOMAIN.base, args.agent)).wait();
       console.log(`\nMegapot route wired to agent ${args.agent} on Base (domain ${DOMAIN.base})`);
     }
-    if (args.megapotBps) {
-      await (await megaPot.setMegapotSpendBps(Number(args.megapotBps))).wait();
-      console.log(`megapotSpendBps set to ${args.megapotBps}`);
-    }
 
     writeDeployment(hre.network.name, {
       network: hre.network.name,
@@ -122,13 +117,13 @@ task("megapot:deploy", "Deploy the confidential pool against live infrastructure
 
 task("megapot:wire-route", "Point the pool at a MegapotTicketAgent on Base")
   .addParam("agent", "MegapotTicketAgent address on Base")
-  .addOptionalParam("bps", "Share of harvested yield played on Megapot", "0")
   .setAction(async (args, hre) => {
     const d = readDeployment(hre.network.name) as any;
     const pot = await hre.ethers.getContractAt("MegaPot", d.megaPot);
     await (await pot.setMegapotRoute(d.tokenMessenger, DOMAIN.base, args.agent)).wait();
-    await (await pot.setMegapotSpendBps(Number(args.bps))).wait();
-    console.log(`route -> ${args.agent} on domain ${DOMAIN.base}, spending ${args.bps} bps of yield`);
+    // How much yield gets played is each depositor's own call, not a deployment argument — the
+    // route just makes it possible to spend at all.
+    console.log(`route -> ${args.agent} on domain ${DOMAIN.base}`);
   });
 
 task("megapot:fund-tickets", "Fund the Megapot ticket budget with USDC from your wallet")
@@ -177,26 +172,40 @@ task("megapot:flush-inbox", "Fold arrived Megapot winnings into the confidential
 //                              Round lifecycle                                 //
 // --------------------------------------------------------------------------- //
 
+/** Track ids, mirroring `MegaPot.MAIN` / `MegaPot.MEGA`. */
+const TRACKS: Record<string, number> = { main: 0, mega: 1 };
+
+/** Resolve a `--track main|mega` argument to the contract's uint8. */
+function trackOf(name: string): number {
+  const id = TRACKS[String(name).toLowerCase()];
+  if (id === undefined) throw new Error(`unknown track "${name}" — expected "main" or "mega"`);
+  return id;
+}
+
 task("megapot:start-round", "Open a new draw round")
   .addOptionalParam("in", "Seconds until the draw may run", DAY, types.int)
-  .setAction(async (args, hre) => {
+    .addOptionalParam("track", 'Prize track: "main" or "mega"', "main", types.string)
+.setAction(async (args, hre) => {
     const p = await pot(hre);
+    const track = trackOf(args.track);
     const drawTime = Math.floor(Date.now() / 1000) + args.in;
-    await (await p.startRound(drawTime)).wait();
-    const roundId = (await p.roundsLength()) - 1n;
+    await (await p.startRound(track, drawTime)).wait();
+    const roundId = (await p.roundsLength(track)) - 1n;
     console.log(`round ${roundId} open, draws at ${new Date(drawTime * 1000).toISOString()}`);
   });
 
 task("megapot:close-entries", "Close entries and reveal the round's ticket total")
   .addParam("round", "Round id", undefined, types.int)
-  .setAction(async (args, hre) => {
+    .addOptionalParam("track", 'Prize track: "main" or "mega"', "main", types.string)
+.setAction(async (args, hre) => {
     await initFhevm(hre);
     const p = await pot(hre);
-    await (await p.closeEntries(args.round)).wait();
+    const track = trackOf(args.track);
+    await (await p.closeEntries(track, args.round)).wait();
 
-    const round = await p.getRound(args.round);
+    const round = await p.getRound(track, args.round);
     const { value, proof } = await publicDecrypt(hre, round.cursorSnapshot);
-    await (await p.finalizeEntries(args.round, value, proof)).wait();
+    await (await p.finalizeEntries(track, args.round, value, proof)).wait();
     console.log(`round ${args.round}: ${Number(value) / 1e6} tickets in play`);
   });
 
@@ -231,10 +240,12 @@ task("megapot:harvest", "Skim yield above principal into the prize reserve").set
 task("megapot:draw", "Run the draw for a round")
   .addParam("round", "Round id", undefined, types.int)
   .addOptionalParam("window", "Claim window in seconds", 7 * DAY, types.int)
-  .setAction(async (args, hre) => {
+    .addOptionalParam("track", 'Prize track: "main" or "mega"', "main", types.string)
+.setAction(async (args, hre) => {
     const p = await pot(hre);
-    await (await p.draw(args.round, args.window)).wait();
-    const round = await p.getRound(args.round);
+    const track = trackOf(args.track);
+    await (await p.draw(track, args.round, args.window)).wait();
+    const round = await p.getRound(track, args.round);
     console.log(
       `round ${args.round} drawn — prize ${Number(round.prize) / 1e6} USDC over ` +
         `${Number(round.totalTickets) / 1e6} tickets. The winner is encrypted; depositors claim to find out.`,
@@ -243,14 +254,16 @@ task("megapot:draw", "Run the draw for a round")
 
 task("megapot:sweep", "Roll an unclaimed prize into the next round")
   .addParam("round", "Round id", undefined, types.int)
-  .setAction(async (args, hre) => {
+    .addOptionalParam("track", 'Prize track: "main" or "mega"', "main", types.string)
+.setAction(async (args, hre) => {
     await initFhevm(hre);
     const p = await pot(hre);
-    await (await p.requestSweep(args.round)).wait();
+    const track = trackOf(args.track);
+    await (await p.requestSweep(track, args.round)).wait();
 
-    const round = await p.getRound(args.round);
+    const round = await p.getRound(track, args.round);
     const { value, proof } = await publicDecrypt(hre, round.unclaimed);
-    await (await p.finalizeSweep(args.round, value, proof)).wait();
+    await (await p.finalizeSweep(track, args.round, value, proof)).wait();
     console.log(
       value === 0n
         ? `round ${args.round} was won and fully claimed`
@@ -273,7 +286,7 @@ task("megapot:refill", "Top up the confidential withdrawal buffer")
 
 task("megapot:status", "Show the pool's public state").setAction(async (_args, hre) => {
   const p = await pot(hre);
-  const rounds = Number(await p.roundsLength());
+  const rounds = Number(await p.roundsLength(0));
   const states = ["None", "Open", "Closing", "Drawable", "Claimable", "Sweeping", "Settled"];
 
   console.log(`deployed principal : ${Number(await p.deployedPrincipal()) / 1e6} USDC`);
@@ -282,11 +295,11 @@ task("megapot:status", "Show the pool's public state").setAction(async (_args, h
   console.log(`entry round        : ${await p.entryRound()}`);
   console.log(`rounds             : ${rounds}`);
   console.log(`ticket budget      : ${Number(await p.ticketBudget()) / 1e6} USDC`);
-  console.log(`megapot spend      : ${await p.megapotSpendBps()} bps of yield`);
+  console.log(`megapot share      : ${await p.megapotShareBps()} bps of the next harvest`);
   console.log(`megapot agent      : ${await p.ticketAgent()}`);
 
   for (let i = Math.max(0, rounds - 5); i < rounds; i++) {
-    const r = await p.getRound(i);
+    const r = await p.getRound(0, i);
     console.log(
       `  #${i} ${states[Number(r.state)].padEnd(9)} prize ${String(Number(r.prize) / 1e6).padStart(8)} ` +
         `tickets ${String(Number(r.totalTickets) / 1e6).padStart(10)} draws ${new Date(
@@ -350,30 +363,30 @@ task("megapot:withdraw", "Withdraw an encrypted amount back to your cUSDC balanc
 task("megapot:claim", "Claim a round — wins and losses are indistinguishable on-chain")
   .addParam("round", "Round id", undefined, types.int)
   .addOptionalParam("account", "Index of the signer claiming", 0, types.int)
-  .setAction(async (args, hre) => {
+    .addOptionalParam("track", 'Prize track: "main" or "mega"', "main", types.string)
+.setAction(async (args, hre) => {
     await initFhevm(hre);
     const d = readDeployment(hre.network.name);
     const signer = (await hre.ethers.getSigners())[args.account];
     const p = (await hre.ethers.getContractAt("MegaPot", d.megaPot)).connect(signer) as any;
+    const track = trackOf(args.track);
 
-    const before = await hre.fhevm.userDecryptEuint(
+    await (await p.claim(track, args.round)).wait();
+
+    // Read the award from its own handle rather than diffing the balance either side. The claim
+    // writes one for every claimer, and a loser's decrypts to zero — so asking "what did I win?"
+    // is a single decryption that reveals nothing by having been asked.
+    const award = await hre.fhevm.userDecryptEuint(
       FhevmType.euint64,
-      await p.confidentialBalanceOf(signer.address),
-      d.megaPot,
-      signer,
-    );
-    await (await p.claim(args.round)).wait();
-    const after = await hre.fhevm.userDecryptEuint(
-      FhevmType.euint64,
-      await p.confidentialBalanceOf(signer.address),
+      await p.awardOf(track, args.round, signer.address),
       d.megaPot,
       signer,
     );
 
     console.log(
-      after > before
-        ? `🎉 you won ${Number(after - before) / 1e6} USDC — only you can see this`
-        : `no win this round (balance still ${Number(after) / 1e6} USDC)`,
+      award > 0n
+        ? `🎉 you won ${Number(award) / 1e6} USDC — only you can see this`
+        : "no win this round — and an observer cannot tell that from a win",
     );
   });
 
@@ -392,7 +405,7 @@ task("megapot:balance", "Decrypt your own pool balance and odds")
         : await hre.fhevm.userDecryptEuint(FhevmType.euint64, handle, d.megaPot, signer);
 
     let tickets = 0n;
-    for (const range of await p.rangesOf(signer.address)) {
+    for (const range of await p.rangesOf(0, signer.address)) {
       const lower = await hre.fhevm.userDecryptEuint(FhevmType.euint64, range.lower, d.megaPot, signer);
       const upper = await hre.fhevm.userDecryptEuint(FhevmType.euint64, range.upper, d.megaPot, signer);
       tickets += upper - lower;
