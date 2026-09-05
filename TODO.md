@@ -18,23 +18,23 @@ piecemeal on the previous deployment, but not yet start-to-finish on this one.
 the draw time is brought forward. Worth doing before anyone judges it, because a `Settled` round in
 the history table is the difference between "it works" and "it says it works".
 
-## 2 · The `MEGA` track is settled but has never been drawn
+## 2 · The `MEGA` track is drawn; only the sweep is outstanding
 
-Progress: `setMegapotAllocation(2500)` mints a `MEGA` range on the live pool, and round 0 on that
-track has been opened, closed and finalised — so the two-phase KMS reveal
-(`closeEntries` → `publicDecrypt` → `finalizeEntries`) is proven on this deployment. It revealed
-**0.25 tickets**.
+Run end to end on the live pool: allocation set to 25%, entries closed and finalised through the
+KMS, prize funded, **draw executed**, claim submitted and the award decrypted. What remains is
+`requestSweep` → `finalizeSweep`, gated by a one-hour claim window that closes 2026-09-05 20:12 UTC.
 
-That number is worth reading carefully, because it is the documented model behaving exactly as
-described: 0.25 tickets were minted at a 25% allocation, then a withdrawal released half of them —
-and the cursor does not rewind, so the revealed total is *gross mints including dead tickets*, not
-live stake. This is the drift described under `harvest`, visible on-chain for the first time.
+**The draw produced a textbook rollover, and it is worth recording what it demonstrated.** The
+revealed ticket total was 0.25, and the sole participant's live range was `[0, 0.125)` — because a
+withdrawal had released the top half of it and *the cursor never rewinds*. So half the space was
+dead, the draw landed in the dead half, and the only depositor in the round lost on a genuine
+coin-flip. The award handle decrypted to exactly `0.0`.
 
-What remains is the draw itself, which needs a prize in the `MEGA` reserve. The deployer wallet is
-at 0 USDC, so this is blocked on funds rather than on code.
+That is the dead-ticket mechanic behaving precisely as the contract documents, observed on-chain
+rather than argued from comments — and it is also the clearest possible evidence that the draw is
+not rigged in the pool's or the keeper's favour. The prize rolls into the next round on sweep.
 
-**Cost:** any amount of Sepolia USDC into `fundPrize(1, …)`, then `draw` → `claim` →
-`requestSweep` → `finalizeSweep`.
+**Cost:** two keeper calls plus a KMS round-trip, after the claim window closes.
 
 ## 3 · The yield loop is wired but has never actually earned
 
