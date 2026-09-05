@@ -32,7 +32,7 @@ describe("MegaPot — fairness", function () {
     const vault = await (await ethers.getContractFactory("MockYieldVault")).deploy(await usdc.getAddress());
     const source = await (
       await ethers.getContractFactory("ERC4626YieldSource")
-    ).deploy(await vault.getAddress(), await pot.getAddress());
+    ).deploy(await vault.getAddress(), await pot.getAddress(), await usdc.getAddress());
     await pot.setYieldSource(await source.getAddress());
 
     const potAddr = await pot.getAddress();

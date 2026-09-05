@@ -23,9 +23,17 @@ contract ERC4626YieldSource is IYieldSource, Ownable {
 
     error AssetMismatch();
 
-    constructor(IERC4626 vault_, address owner_) Ownable(owner_) {
+    /// @param expectedAsset The token the pool will hand this source. Passing it in is what makes
+    ///        the deployed adapter self-describing: a vault denominated in something else is
+    ///        rejected here, at construction, rather than at the first `invest` — by which point
+    ///        it is the pool's problem. `MegaPot.setYieldSource` checks the same thing again on
+    ///        its side, because the two contracts are deployed by different steps.
+    constructor(IERC4626 vault_, address owner_, address expectedAsset) Ownable(owner_) {
+        address a = vault_.asset();
+        if (a == address(0) || a != expectedAsset) revert AssetMismatch();
+
         vault = vault_;
-        _asset = IERC20(vault_.asset());
+        _asset = IERC20(a);
     }
 
     /// @inheritdoc IYieldSource

@@ -82,7 +82,7 @@ task("megapot:deploy", "Deploy the confidential pool against live infrastructure
     if (args.vault) {
       const source = await (
         await ethers.getContractFactory("ERC4626YieldSource")
-      ).deploy(args.vault, potAddr);
+      ).deploy(args.vault, potAddr, usdcAddr);
       await source.waitForDeployment();
       yieldSource = await source.getAddress();
       await (await megaPot.setYieldSource(yieldSource)).wait();

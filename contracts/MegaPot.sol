@@ -303,6 +303,8 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
     error AlreadyOptedIn();
     error NotOptedIn();
     error BufferFull();
+    error UnsupportedToken();
+    error AssetMismatch();
 
     modifier onlyKeeper() {
         if (msg.sender != keeper && msg.sender != owner()) revert OnlyKeeper();
@@ -315,8 +317,22 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
     }
 
     constructor(IConfidentialWrapper cToken_, address governance, address keeper_) Ownable(governance) {
+        if (address(cToken_) == address(0)) revert UnsupportedToken();
+        address underlying = cToken_.underlying();
+        if (underlying == address(0)) revert UnsupportedToken();
+
+        // The pool keeps two sets of books. Its *public* accounting — deployedPrincipal,
+        // bufferTarget, ticketBudget, every amount the yield source sees — is denominated in
+        // underlying units. Its *confidential* ledger — balances, the ticket space, prizeReserve —
+        // is denominated in wrapper units. Those two scales coincide only when the wrapper's rate
+        // is 1, which is to say when the underlying has six decimals or fewer.
+        //
+        // Anything else silently mixes units by a factor of 10^(d-6) and leaves truncation dust in
+        // every wrap. Refuse it at construction rather than discover it in production.
+        if (cToken_.rate() != 1) revert UnsupportedToken();
+
         cToken = cToken_;
-        asset = IERC20(cToken_.underlying());
+        asset = IERC20(underlying);
         keeper = keeper_;
 
         _tracks[MAIN].cursor = FHE.asEuint64(0);
@@ -790,10 +806,15 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
     ///         Megapot leg still needs funding to be exercised end to end.
     function fundTicketBudget(uint256 amount) external {
         if (amount == 0) revert ZeroAmountFunded();
-        asset.safeTransferFrom(msg.sender, address(this), amount);
-        ticketBudget += amount;
 
-        emit TicketBudgetFunded(msg.sender, amount);
+        // Credit what arrived, not what was asked for — the same partial-fill discipline every
+        // other value-in path here follows. A fee-on-transfer asset would otherwise over-credit.
+        uint256 before = asset.balanceOf(address(this));
+        asset.safeTransferFrom(msg.sender, address(this), amount);
+        uint256 got = asset.balanceOf(address(this)) - before;
+        ticketBudget += got;
+
+        emit TicketBudgetFunded(msg.sender, got);
     }
 
     /// @notice Fold externally supplied underlying into the prize reserve. This is how Megapot
@@ -804,11 +825,15 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
     ///         principal and prize money can never cross over by accident. See `PrizeInbox`.
     function fundPrize(uint8 track, uint256 amount) external validTrack(track) returns (uint64 minted) {
         if (amount == 0) revert ZeroAmountFunded();
+
+        uint256 before = asset.balanceOf(address(this));
         asset.safeTransferFrom(msg.sender, address(this), amount);
-        minted = _wrapIntoPool(amount);
+        uint256 got = asset.balanceOf(address(this)) - before;
+
+        minted = _wrapIntoPool(got);
         _tracks[track].prizeReserve += minted;
 
-        emit PrizeFunded(track, msg.sender, amount, minted);
+        emit PrizeFunded(track, msg.sender, got, minted);
     }
 
     /// @notice Refill the withdrawal buffer to `bufferTarget`. **Permissionless** — this is what
@@ -866,8 +891,15 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
     //                          Admin / safety                               //
     // ===================================================================== //
 
+    /// @dev Validates that the venue is denominated in the pool's own asset. Without this a
+    ///      mismatched source is permanently fatal: `invest` would hand USDC to a vault that wants
+    ///      something else, revert, and the one-shot guard would mean it could never be
+    ///      re-pointed. So the guard also relaxes — a live source may be replaced once every unit
+    ///      of principal is home, which keeps "governance cannot move deployed principal" intact
+    ///      while making a misconfiguration recoverable instead of terminal.
     function setYieldSource(address source) external onlyOwner {
-        if (address(yieldSource) != address(0)) revert YieldSourceAlreadySet();
+        if (address(yieldSource) != address(0) && deployedPrincipal != 0) revert YieldSourceAlreadySet();
+        if (source == address(0) || IYieldSource(source).asset() != address(asset)) revert AssetMismatch();
         yieldSource = IYieldSource(source);
         emit YieldSourceSet(source);
     }
