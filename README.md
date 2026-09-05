@@ -126,11 +126,15 @@ Ethereum, the lottery position lives on Base, and Circle's CCTP joins them — w
 fixed at burn time, so the keeper is a liveness dependency rather than a custodian.
 [Full reasoning →](./ARCHITECTURE.md#1-the-constraint-that-forces-the-shape)
 
-### Before you enable the Megapot route
+### Before you allocate yield to Megapot
 
-`megapotSpendBps` **defaults to 0**. Megapot takes 3,000 bps on Base mainnet, so every unit of
-yield played there returns ~0.70 in expectation. You are buying variance, deliberately.
-[Economics →](./ARCHITECTURE.md#8-economics--read-this-before-setting-megapotspendbps)
+Every depositor sets their own share with `setMegapotAllocation`, and the default is **0**. There
+is deliberately no pool-wide multiplier: the yield is yours, so the choice is too.
+
+Megapot takes 3,000 bps on Base mainnet, so every unit of yield played there returns ~0.70 in
+expectation. You are buying variance, not edge — a rarer shot at a much larger number, with your
+principal untouched at any setting.
+[Economics →](./ARCHITECTURE.md#8-economics--read-this-before-allocating-yield-to-megapot)
 
 ---
 

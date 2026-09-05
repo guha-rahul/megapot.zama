@@ -258,8 +258,9 @@ on Base Sepolia; `setReferrer` rejects the agent's own address locally so a keep
 error. A pool cannot rebate its own edge. The agent can still *receive* referral fees when another
 integrator points purchases at it, and those come home the same way winnings do.
 
-`MegaPot` is not obliged to use Megapot at all. With `megapotSpendBps = 0` it is a self-contained
-confidential no-loss lottery funded purely by yield.
+`MegaPot` is not obliged to use Megapot at all. If no depositor allocates anything, it is a
+self-contained confidential no-loss lottery funded purely by yield — and that is the default, since
+`megapotBps` starts at zero for everyone.
 
 ---
 

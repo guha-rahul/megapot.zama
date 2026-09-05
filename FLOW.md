@@ -13,7 +13,7 @@ re-checked rather than trusted.
 > **The money is always public. Only the map from money → person is encrypted.**
 
 Every cross-chain amount derives from `harvest()`, which reads nothing but public aggregates
-(`yieldSource.totalAssets() − deployedPrincipal`, `MegaPot.sol:534`).
+(`yieldSource.totalAssets() − deployedPrincipal`, in `MegaPot.harvest`).
 
 **No encrypted value ever crosses the bridge, and no bridged value is derived from any per-user
 quantity.** That is why the entire Base leg — ticket purchases, winnings, CCTP transfers — can be
@@ -137,7 +137,7 @@ the burn reaches finality. *The keeper never holds the funds.*
 
 ### Base Sepolia — fully public, and that is fine
 
-**9 · `buyTickets`** (`MegapotTicketAgent.sol:125`) — `purchaseTickets(referrer, amount, address(this))`.
+**9 · `buyTickets`** (`MegapotTicketAgent.buyTickets`) — `purchaseTickets(referrer, amount, address(this))`.
 The agent holds the position in its own name. Pooled bps accounting, not NFTs, so there is no
 receiver hook to get wrong.
 
@@ -159,7 +159,7 @@ receiver hook to get wrong.
 
 **13 · `receiveMessage` on Ethereum** — mints to `PrizeInbox`.
 
-**14 · `inbox.flush()`** (`PrizeInbox.sol:39`) — permissionless. The inbox has **no owner and no
+**14 · `inbox.flush()`** (`PrizeInbox.flush`) — permissionless. The inbox has **no owner and no
 rescue function**; its entire ABI is `flush / pending / pot / asset`. One exit exists.
 
 **15 · `fundPrize`** (`:595`) — pull-based `safeTransferFrom(msg.sender)`, wrapped into
