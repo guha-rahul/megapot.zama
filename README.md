@@ -20,30 +20,46 @@ encrypted ticket space, the trust model, and every verified address.
 🔐 **[FLOW.md](./FLOW.md)** — the end-to-end flow across both chains, and every privacy boundary
 in it: what is encrypted, what gets decrypted and *where*, what is revealed, and what never is.
 
-📋 **[TODO.md](./TODO.md)** — open work, each item with its real cost: the one-transaction
-onboarding redeploy, the withdraw-liquidity gap, and why no yield source is wired on testnet.
+📋 **[TODO.md](./TODO.md)** — open work, each item with its real cost.
 
 ---
 
-## Live on testnet
+## Try it live
 
-Deployed and driven end to end, against real contracts on both chains.
+**https://megapot-zama.vercel.app** — connect a wallet on Ethereum Sepolia and run the whole
+cycle. There is an open round with a prize in it right now.
+
+You need two free things first:
+
+| What | Where |
+| --- | --- |
+| Sepolia ETH, for gas | [sepoliafaucet.com](https://sepoliafaucet.com) or [Google's faucet](https://cloud.google.com/application/web3/faucet/ethereum/sepolia) |
+| Sepolia USDC, the pool's token | [faucet.circle.com](https://faucet.circle.com) — pick *Ethereum Sepolia* |
+
+The pool accepts exactly one token: Circle's Sepolia USDC at
+[`0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238`](https://sepolia.etherscan.io/address/0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238).
+Several other things on Sepolia are also called "USDC" — Aave's test token in particular — and the
+app will tell you if you paste one of them.
+
+Then: **Deposit** → wait for a **Draw** (or run one yourself from the keeper console, if you hold
+the keeper key) → **Claim** and decrypt what you won → **Withdraw**, any time, in full.
+
+## Deployed contracts
 
 **Ethereum Sepolia**
 | Contract | Address |
 | --- | --- |
-| `MegaPot` | [`0x14a451a725ee757834887A4FA5A0fDCA8510E1Ca`](https://sepolia.etherscan.io/address/0x14a451a725ee757834887A4FA5A0fDCA8510E1Ca) |
-| `ConfidentialUSDC` | [`0x84486e5C57C4Fb20934BD777FA51CE6341B3B46A`](https://sepolia.etherscan.io/address/0x84486e5C57C4Fb20934BD777FA51CE6341B3B46A) |
-| `PrizeInbox` | [`0xA621d4Fc6B50Bab107e6B003D4Ea97d191EAf2E7`](https://sepolia.etherscan.io/address/0xA621d4Fc6B50Bab107e6B003D4Ea97d191EAf2E7) |
+| `MegaPot` | [`0xD5548Cb5b3E2d772f5B72f399f5D52107631e04b`](https://sepolia.etherscan.io/address/0xD5548Cb5b3E2d772f5B72f399f5D52107631e04b) |
+| `ConfidentialUSDC` | [`0xc8995AA91E962f530798eeDC5bB89a86e1d1Dac1`](https://sepolia.etherscan.io/address/0xc8995AA91E962f530798eeDC5bB89a86e1d1Dac1) |
+| `PrizeInbox` | [`0xeF8AFB44460a395f753d685F61C5C8850e6F0E87`](https://sepolia.etherscan.io/address/0xeF8AFB44460a395f753d685F61C5C8850e6F0E87) |
+| `MockYieldVault` | [`0xAE4c2d6cA31e45acd1CDDe30F8de54ce4a87d478`](https://sepolia.etherscan.io/address/0xAE4c2d6cA31e45acd1CDDe30F8de54ce4a87d478) |
+| `ERC4626YieldSource` | [`0xa7eD29e0E537d27276af76E3642549Fd81Bb9eb1`](https://sepolia.etherscan.io/address/0xa7eD29e0E537d27276af76E3642549Fd81Bb9eb1) |
 
 **Base Sepolia**
 | Contract | Address |
 | --- | --- |
-| `MegapotTicketAgent` | [`0x84486e5C57C4Fb20934BD777FA51CE6341B3B46A`](https://sepolia.basescan.org/address/0x84486e5C57C4Fb20934BD777FA51CE6341B3B46A) |
+| `MegapotTicketAgent` | [`0xB3089B1Bff1555D7F7cf88DD236bbE99C4E59730`](https://sepolia.basescan.org/address/0xB3089B1Bff1555D7F7cf88DD236bbE99C4E59730) |
 | Megapot `BaseJackpot` (theirs) | [`0x6f03c7BCaDAdBf5E6F5900DA3d56AdD8FbDac5De`](https://sepolia.basescan.org/address/0x6f03c7BCaDAdBf5E6F5900DA3d56AdD8FbDac5De) |
-
-> The pool and the agent share an address by coincidence — both were the first contract deployed
-> from the same account on their respective chains, so `CREATE` produced the same result.
 
 Real run against the live Zama coprocessor, relayer and KMS:
 
@@ -239,9 +255,33 @@ which CCTP cannot carry in either direction. The agent is deployed with bridging
 so explicitly (`bridgeEnabled()` is false; `bridgeHome` reverts `BridgingDisabled`). On mainnet,
 Megapot v1 settles in real USDC and the loop closes.
 
-Each leg is still verified against real contracts — live Megapot, live CCTP, live Zama. There is
-also no ERC-4626 USDC venue on Sepolia matching Circle's USDC, so `fundPrize` and
-`fundTicketBudget` stand in for `harvest()` where no venue exists.
+Each leg is still verified against real contracts — live Megapot, live CCTP, live Zama.
+
+### The yield source
+
+Sepolia has no healthy ERC-4626 vault over Circle's USDC. Aave's market there runs above 100%
+utilisation on a couple of dozen dollars of liquidity and uses its own test token, so pointing at
+it would produce a demo that reverts rather than one that works.
+
+So the deployment includes a **`MockYieldVault`** — a plain ERC-4626 vault — wired through
+`ERC4626YieldSource`. This is not a stub standing in for the yield path; it *is* the yield path,
+executing for real on a public testnet: `invest()` deploys principal into it, `harvest()` pulls
+only the surplus above `deployedPrincipal`, and `topUpBuffer()` pulls principal back when the
+withdrawal buffer runs short. All three run on-chain and can be watched.
+
+**Swapping in a real venue is one argument and no contract change:**
+
+```shell
+npx hardhat megapot:deploy --network mainnet --vault 0x<aave-or-morpho-vault>
+```
+
+`ERC4626YieldSource` speaks plain ERC-4626, and its constructor refuses any vault not denominated
+in the pool's own asset. `MegaPot.setYieldSource` checks the same thing again from its side, and
+will re-point a venue as long as no principal is currently deployed — so a misconfiguration is
+recoverable rather than terminal.
+
+The vault has to be *funded* to earn anything, which on testnet means minting USDC into it. That is
+the one part of the loop that a real venue does by itself.
 
 ---
 
