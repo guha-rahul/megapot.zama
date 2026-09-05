@@ -103,7 +103,7 @@ describe("MegaPot — the opt-in Megapot track", function () {
 
       expect(await ticketsOf(ctx, MEGA, ctx.alice)).to.equal(0n);
 
-      await ctx.pot.connect(ctx.alice).optIn();
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(10_000);
 
       expect(await ctx.pot.playsMegapot(ctx.alice.address)).to.equal(true);
       expect(await ticketsOf(ctx, MEGA, ctx.alice)).to.equal(USDC(1_000));
@@ -113,7 +113,7 @@ describe("MegaPot — the opt-in Megapot track", function () {
 
     it("mirrors later deposits onto both tracks", async function () {
       const ctx = await deploy();
-      await ctx.pot.connect(ctx.alice).optIn();
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(10_000);
       await deposit(ctx, ctx.alice, USDC(400));
       await deposit(ctx, ctx.alice, USDC(600));
 
@@ -130,12 +130,121 @@ describe("MegaPot — the opt-in Megapot track", function () {
       expect(await ticketsOf(ctx, MAIN, ctx.bob)).to.equal(USDC(5_000));
     });
 
-    it("refuses a double opt-in, and an opt-out by someone who never opted in", async function () {
+    it("refuses an allocation that is out of range, off-step, or the one already set", async function () {
       const ctx = await deploy();
-      await ctx.pot.connect(ctx.alice).optIn();
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(2_500);
 
-      await expectCustomError(() => ctx.pot.connect(ctx.alice).optIn.staticCall(), "AlreadyOptedIn()");
-      await expectCustomError(() => ctx.pot.connect(ctx.bob).optOut.staticCall(), "NotOptedIn()");
+      // Above 100%.
+      await expectCustomError(
+        () => ctx.pot.connect(ctx.bob).setMegapotAllocation.staticCall(10_001),
+        "InvalidAllocation()",
+      );
+      // Off-step. Coarse buckets are what keep a public preference from becoming a fingerprint,
+      // so an arbitrary 3,700 is refused rather than silently rounded.
+      await expectCustomError(
+        () => ctx.pot.connect(ctx.bob).setMegapotAllocation.staticCall(3_750),
+        "InvalidAllocation()",
+      );
+      // A no-op write, which would burn a rate-limit slot and emit a misleading event.
+      await expectCustomError(
+        () => ctx.pot.connect(ctx.alice).setMegapotAllocation.staticCall(2_500),
+        "InvalidAllocation()",
+      );
+      await expectCustomError(
+        () => ctx.pot.connect(ctx.bob).setMegapotAllocation.staticCall(0),
+        "InvalidAllocation()",
+      );
+    });
+  });
+
+  // ------------------------------------------------------------------- //
+  //                        Partial allocation                           //
+  // ------------------------------------------------------------------- //
+
+  describe("choosing a share", function () {
+    it("mints tickets in proportion to the chosen share, not the whole balance", async function () {
+      const ctx = await deploy();
+      await deposit(ctx, ctx.alice, USDC(1_000));
+
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(2_500);
+
+      expect(await ticketsOf(ctx, MEGA, ctx.alice)).to.equal(USDC(250));
+      // Additive, at every setting: a quarter in the second game costs nothing in the first.
+      expect(await ticketsOf(ctx, MAIN, ctx.alice)).to.equal(USDC(1_000));
+    });
+
+    it("mirrors later deposits at the chosen share", async function () {
+      const ctx = await deploy();
+      await deposit(ctx, ctx.alice, USDC(1_000));
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(2_500);
+
+      await deposit(ctx, ctx.alice, USDC(400));
+      await deposit(ctx, ctx.alice, USDC(600));
+
+      expect(await ticketsOf(ctx, MAIN, ctx.alice)).to.equal(USDC(2_000));
+      expect(await ticketsOf(ctx, MEGA, ctx.alice)).to.equal(USDC(500));
+    });
+
+    it("re-stakes at the current share rather than silently promoting to the whole balance", async function () {
+      const ctx = await deploy();
+      await deposit(ctx, ctx.alice, USDC(1_000));
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(2_500);
+
+      // `_compact` used to mint `_balance[user]` on whichever track it was given, which would
+      // have quietly turned this depositor's 25% into 100% the moment they re-staked.
+      await settleEntries(ctx, MAIN, await startRound(ctx, MAIN));
+      await settleEntries(ctx, MEGA, await startRound(ctx, MEGA));
+      await ctx.pot.connect(ctx.alice).restake();
+
+      expect(await ticketsOf(ctx, MAIN, ctx.alice)).to.equal(USDC(1_000));
+      expect(await ticketsOf(ctx, MEGA, ctx.alice)).to.equal(USDC(250));
+    });
+
+    it("shrinks both tracks proportionally on a withdrawal", async function () {
+      const ctx = await deploy();
+      await deposit(ctx, ctx.alice, USDC(1_000));
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(4_000);
+
+      await withdraw(ctx, ctx.alice, USDC(500));
+
+      // Releasing the full amount from MEGA would have destroyed 500 of the 400 tickets held —
+      // five times the correct release, clamped at zero and therefore invisible.
+      expect(await ticketsOf(ctx, MAIN, ctx.alice)).to.equal(USDC(500));
+      expect(await ticketsOf(ctx, MEGA, ctx.alice)).to.equal(USDC(200));
+    });
+
+    it("tops a raise up by the shortfall, leaving the ranges already held intact", async function () {
+      const ctx = await deploy();
+      await deposit(ctx, ctx.alice, USDC(1_000));
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(2_500);
+
+      const before = await ctx.pot.rangesOf(MEGA, ctx.alice.address);
+
+      await settleEntries(ctx, MEGA, await startRound(ctx, MEGA));
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(5_000);
+
+      const after = await ctx.pot.rangesOf(MEGA, ctx.alice.address);
+      expect(await ticketsOf(ctx, MEGA, ctx.alice)).to.equal(USDC(500));
+      // A raise mints only the difference, so it creates no dead tickets at all.
+      expect(after.length).to.equal(2);
+      expect(after[0].lower).to.equal(before[0].lower);
+      expect(after[0].upper).to.equal(before[0].upper);
+    });
+
+    it("lets a depositor lower repeatedly without waiting for a new round", async function () {
+      const ctx = await deploy();
+      await deposit(ctx, ctx.alice, USDC(1_000));
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(10_000);
+
+      // Leaving, wholly or partly, is never rate-limited — only minting can inflate the space,
+      // and charging someone to leave would trap them in a game they no longer want.
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(5_000);
+      expect(await ticketsOf(ctx, MEGA, ctx.alice)).to.equal(USDC(500));
+
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(1_000);
+      expect(await ticketsOf(ctx, MEGA, ctx.alice)).to.equal(USDC(100));
+
+      expect(await ticketsOf(ctx, MAIN, ctx.alice)).to.equal(USDC(1_000));
     });
   });
 
@@ -147,8 +256,8 @@ describe("MegaPot — the opt-in Megapot track", function () {
     it("drops Megapot tickets but never touches the main position or the balance", async function () {
       const ctx = await deploy();
       await deposit(ctx, ctx.alice, USDC(1_000));
-      await ctx.pot.connect(ctx.alice).optIn();
-      await ctx.pot.connect(ctx.alice).optOut();
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(10_000);
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(0);
 
       expect(await ctx.pot.playsMegapot(ctx.alice.address)).to.equal(false);
       expect(await ticketsOf(ctx, MEGA, ctx.alice)).to.equal(0n);
@@ -162,12 +271,12 @@ describe("MegaPot — the opt-in Megapot track", function () {
       const ctx = await deploy();
       await deposit(ctx, ctx.alice, USDC(1_000));
 
-      await ctx.pot.connect(ctx.alice).optIn();
-      await ctx.pot.connect(ctx.alice).optOut();
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(10_000);
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(0);
       // Opting back in within the same entry round would mint a second live range over the same
       // balance while the first one's positions are already dead — that is the inflation attack.
       await expectCustomError(
-        () => ctx.pot.connect(ctx.alice).optIn.staticCall(),
+        () => ctx.pot.connect(ctx.alice).setMegapotAllocation.staticCall(10_000),
         "AlreadyCompactedThisRound()",
       );
     });
@@ -175,13 +284,13 @@ describe("MegaPot — the opt-in Megapot track", function () {
     it("lets a depositor rejoin once the entry round has moved on", async function () {
       const ctx = await deploy();
       await deposit(ctx, ctx.alice, USDC(1_000));
-      await ctx.pot.connect(ctx.alice).optIn();
-      await ctx.pot.connect(ctx.alice).optOut();
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(10_000);
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(0);
 
       const roundId = await startRound(ctx, MEGA);
       await settleEntries(ctx, MEGA, roundId);
 
-      await ctx.pot.connect(ctx.alice).optIn();
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(10_000);
       expect(await ticketsOf(ctx, MEGA, ctx.alice)).to.equal(USDC(1_000));
     });
   });
@@ -193,12 +302,100 @@ describe("MegaPot — the opt-in Megapot track", function () {
   it("shrinks both tracks by exactly the amount withdrawn", async function () {
     const ctx = await deploy();
     await deposit(ctx, ctx.alice, USDC(1_000));
-    await ctx.pot.connect(ctx.alice).optIn();
+    await ctx.pot.connect(ctx.alice).setMegapotAllocation(10_000);
 
     await withdraw(ctx, ctx.alice, USDC(400));
 
     expect(await ticketsOf(ctx, MAIN, ctx.alice)).to.equal(USDC(600));
     expect(await ticketsOf(ctx, MEGA, ctx.alice)).to.equal(USDC(600));
+  });
+
+  // ------------------------------------------------------------------- //
+  //                  Settling claims before tickets move                //
+  // ------------------------------------------------------------------- //
+
+  /**
+   * Reshaping a ticket range decides, retroactively, whether a prize was won.
+   *
+   * Withdrawing, re-staking and changing an allocation all move ranges, and a win is decided by
+   * whether the encrypted ticket falls inside one. Doing that before settling would destroy a
+   * prize the depositor had already won — and destroy it *invisibly*, because everything here is
+   * encrypted: they would simply see an award of zero and read it as an ordinary loss.
+   *
+   * Every one of these fails on a contract that reshapes first.
+   */
+  describe("claims settle before ranges move", function () {
+    /** Draw a round Alice is certain to win, by making her the only holder of the space. */
+    async function soleWinner(ctx: Ctx, track: number, prize: bigint) {
+      const roundId = await startRound(ctx, track);
+      await settleEntries(ctx, track, roundId);
+      await fundPrize(ctx, track, prize);
+      await time.increase(DAY);
+      await ctx.pot.connect(ctx.keeper).draw(track, roundId, DAY);
+      return roundId;
+    }
+
+    it("pays a pending win into the balance a withdrawal is capped against", async function () {
+      const ctx = await deploy();
+      await deposit(ctx, ctx.alice, USDC(1_000));
+      const roundId = await soleWinner(ctx, MAIN, USDC(50));
+
+      // Withdraw everything without claiming first. The old order shrank the winning range and
+      // silently binned the prize.
+      await withdraw(ctx, ctx.alice, USDC(1_050));
+
+      expect(await ctx.pot.hasClaimed(MAIN, roundId, ctx.alice.address)).to.equal(true);
+      expect(await decryptAs(await ctx.pot.awardOf(MAIN, roundId, ctx.alice.address), ctx.potAddr, ctx.alice)).to.equal(
+        USDC(50),
+      );
+      // Principal and prize both left the pool, so "withdraw everything" means everything.
+      expect(await decryptAs(await ctx.pot.confidentialBalanceOf(ctx.alice.address), ctx.potAddr, ctx.alice)).to.equal(
+        0n,
+      );
+    });
+
+    it("folds a pending win into the new range when re-staking", async function () {
+      const ctx = await deploy();
+      await deposit(ctx, ctx.alice, USDC(1_000));
+      await soleWinner(ctx, MAIN, USDC(50));
+
+      await settleEntries(ctx, MAIN, await startRound(ctx, MAIN));
+      await ctx.pot.connect(ctx.alice).restake();
+
+      // The win is in the balance, so the fresh range covers it too.
+      expect(await ticketsOf(ctx, MAIN, ctx.alice)).to.equal(USDC(1_050));
+    });
+
+    it("pays a pending Megapot win before an allocation change drops the range", async function () {
+      const ctx = await deploy();
+      await deposit(ctx, ctx.alice, USDC(1_000));
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(10_000);
+      const roundId = await soleWinner(ctx, MEGA, USDC(25));
+
+      // Dropping to zero deletes every MEGA range — including the one that just won.
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(0);
+
+      expect(await decryptAs(await ctx.pot.awardOf(MEGA, roundId, ctx.alice.address), ctx.potAddr, ctx.alice)).to.equal(
+        USDC(25),
+      );
+    });
+
+    it("stays idempotent when the depositor already claimed by hand", async function () {
+      const ctx = await deploy();
+      await deposit(ctx, ctx.alice, USDC(1_000));
+      const roundId = await soleWinner(ctx, MAIN, USDC(50));
+
+      await ctx.pot.connect(ctx.alice).claim(MAIN, roundId);
+      // Must not revert AlreadyClaimed on the auto-settle path.
+      await withdraw(ctx, ctx.alice, USDC(100));
+
+      // 1,000 deposited + 50 won − 100 withdrawn. Tickets track the deposit, not the winnings:
+      // a prize lands in the balance and only becomes tickets when the depositor re-stakes.
+      expect(await decryptAs(await ctx.pot.confidentialBalanceOf(ctx.alice.address), ctx.potAddr, ctx.alice)).to.equal(
+        USDC(950),
+      );
+      expect(await ticketsOf(ctx, MAIN, ctx.alice)).to.equal(USDC(900));
+    });
   });
 
   // ------------------------------------------------------------------- //
@@ -211,7 +408,7 @@ describe("MegaPot — the opt-in Megapot track", function () {
       // Alice plays both games; Bob only the main one. Alice therefore owns every MEGA ticket.
       await deposit(ctx, ctx.alice, USDC(1_000));
       await deposit(ctx, ctx.bob, USDC(9_000));
-      await ctx.pot.connect(ctx.alice).optIn();
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(10_000);
 
       const roundId = await startRound(ctx, MEGA);
       const total = await settleEntries(ctx, MEGA, roundId);
@@ -254,7 +451,7 @@ describe("MegaPot — the opt-in Megapot track", function () {
       const ctx = await deploy();
       await deposit(ctx, ctx.alice, USDC(1_000));
       await deposit(ctx, ctx.bob, USDC(3_000));
-      await ctx.pot.connect(ctx.alice).optIn();
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(10_000);
 
       await fundPrize(ctx, MAIN, USDC(10));
       await fundPrize(ctx, MEGA, USDC(70));
@@ -280,7 +477,7 @@ describe("MegaPot — the opt-in Megapot track", function () {
   it("hands every claimer an award handle only they can read", async function () {
     const ctx = await deploy();
     await deposit(ctx, ctx.alice, USDC(1_000));
-    await ctx.pot.connect(ctx.alice).optIn();
+    await ctx.pot.connect(ctx.alice).setMegapotAllocation(10_000);
 
     const roundId = await startRound(ctx, MEGA);
     await settleEntries(ctx, MEGA, roundId);
@@ -350,7 +547,7 @@ describe("MegaPot — the opt-in Megapot track", function () {
       // Alice (opted in) holds a quarter of the pool; Bob holds the rest.
       await deposit(ctx, ctx.alice, USDC(1_000));
       await deposit(ctx, ctx.bob, USDC(3_000));
-      await ctx.pot.connect(ctx.alice).optIn();
+      await ctx.pot.connect(ctx.alice).setMegapotAllocation(10_000);
 
       // Both spaces must be settled — the split reads the revealed ticket totals.
       const mainRound = await startRound(ctx, MAIN);

@@ -78,6 +78,12 @@ import {IYieldSource} from "./yield/IYieldSource.sol";
 ///           2. `finalizeSweep` reveals *whether* a round's prize was claimed, never by whom.
 ///              The anonymity set is everyone who called `claim` for that round — and calling
 ///              `claim` is cheap and rational for every depositor, winner or not.
+///           3. `megapotBps` is a public preference: an observer learns you chose 25%, never 25%
+///              *of what*. It has to be public for `harvest` to split fairly. It is quantised to
+///              whole percents so the choice lands in a bucket shared with other people rather
+///              than becoming a fingerprint — but a depositor who changes allocation alone
+///              between two closes moves the `MEGA` cursor by `balance × Δbps`, with `Δbps`
+///              public, which narrows their balance. Change it in company, not in isolation.
 contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -131,9 +137,15 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
     /// @notice One independent prize game: its own ticket space, rounds and reserve.
     ///
     /// @dev    Two tracks run over a single balance ledger. `MAIN` includes every depositor and is
-    ///         funded by yield; `MEGA` includes only those who opted in and is funded by winnings
-    ///         coming back from Megapot on Base. Being in `MEGA` is purely additive — it never
-    ///         removes you from `MAIN`, so opting in cannot cost you anything but gas.
+    ///         funded by yield; `MEGA` includes whatever share of their stake each depositor chose
+    ///         to allocate (`setMegapotAllocation`) and is funded by winnings coming back from
+    ///         Megapot on Base. Being in `MEGA` is purely additive at any share — it never removes
+    ///         a ticket from `MAIN`, so no allocation can cost you anything but gas.
+    ///
+    ///         Because every `MEGA` mint is its depositor's `MAIN` mint scaled by their own share,
+    ///         the ratio of the two revealed ticket totals *is* the stake-weighted average
+    ///         allocation. That is what lets `harvest` split the yield fairly without holding any
+    ///         per-user accounting in the clear.
     ///
     ///         Both tracks run the *same* selection code, just indexed. That is deliberate: the
     ///         confidential draw is the part worth getting right once.
@@ -200,13 +212,22 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
     ///      same reason.
     mapping(uint8 => mapping(address => uint64)) private _lastCompactRound;
 
-    /// @notice Whether a depositor plays the Megapot-funded track as well as the main one.
+    /// @notice What share of a depositor's stake also plays the Megapot-funded prize, in basis
+    ///         points. Zero means they are in the main draw only.
     ///
     /// @dev    Public on purpose. It leaks a *preference*, never an amount: an observer learns
-    ///         that you are playing the second game, not how much you have in either. Making it
-    ///         encrypted would mean the ticket ratio in `harvest` could not be computed in the
-    ///         clear, and that ratio is the only thing keeping the split fair.
-    mapping(address => bool) public playsMegapot;
+    ///         that you chose 25%, not 25% *of what*. Encrypting it would mean the ticket ratio in
+    ///         `harvest` could not be computed in the clear, and that ratio is the only thing
+    ///         keeping the split fair between depositors who opted in and those who did not.
+    ///
+    ///         It is quantised to `ALLOCATION_STEP` for a reason beyond tidiness: a preference is
+    ///         only a fingerprint if it is unique. Among a small set of depositors an arbitrary
+    ///         3,700 identifies you far better than 2,500 does, so coarse buckets collide and the
+    ///         anonymity set stays whole.
+    mapping(address => uint16) public megapotBps;
+
+    /// @notice Granularity of a Megapot allocation, in basis points. 100 = whole percents.
+    uint16 public constant ALLOCATION_STEP = 100;
 
     /// @notice Underlying the pool aims to keep un-deployed so withdrawals always settle at once.
     ///         `topUpBuffer` is permissionless, so a shortfall is repairable by anyone.
@@ -257,8 +278,6 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
     event Claimed(uint8 indexed track, uint256 indexed roundId, address indexed user);
     event SweepRequested(uint8 indexed track, uint256 indexed roundId, euint64 unclaimed);
     event Swept(uint8 indexed track, uint256 indexed roundId, uint64 rolledOver);
-    event MegapotOptIn(address indexed user);
-    event MegapotOptOut(address indexed user);
     event BufferTargetSet(uint256 target);
     event DeployRequested(bytes32 indexed unwrapRequestId);
     event Invested(uint256 amount);
@@ -300,8 +319,7 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
     error InvalidConfig();
     error ZeroAmountFunded();
     error UnknownTrack();
-    error AlreadyOptedIn();
-    error NotOptedIn();
+    error InvalidAllocation();
     error BufferFull();
     error UnsupportedToken();
     error AssetMismatch();
@@ -374,7 +392,7 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
         // claim it does not need.
         if (
             _ranges[MAIN][msg.sender].length >= MAX_RANGES ||
-            (playsMegapot[msg.sender] && _ranges[MEGA][msg.sender].length >= MAX_RANGES)
+            (playsMegapot(msg.sender) && _ranges[MEGA][msg.sender].length >= MAX_RANGES)
         ) {
             _settleClaims(msg.sender);
         }
@@ -386,7 +404,7 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
         _grow(MAIN, msg.sender, received);
         // The Megapot track mirrors the main one for anyone who opted in, so one deposit buys
         // tickets in both games at once.
-        if (playsMegapot[msg.sender]) _grow(MEGA, msg.sender, received);
+        if (playsMegapot(msg.sender)) _grow(MEGA, msg.sender, _scale(received, msg.sender));
 
         emit Deposited(msg.sender, _ranges[MAIN][msg.sender].length - 1);
     }
@@ -399,7 +417,7 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
         _settleClaims(msg.sender);
 
         _compact(MAIN, msg.sender);
-        if (playsMegapot[msg.sender]) _compact(MEGA, msg.sender);
+        if (playsMegapot(msg.sender)) _compact(MEGA, msg.sender);
         emit Restaked(msg.sender);
     }
 
@@ -435,53 +453,64 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
         FHE.allow(sent, msg.sender);
 
         _releaseTickets(MAIN, msg.sender, sent);
-        if (playsMegapot[msg.sender]) _releaseTickets(MEGA, msg.sender, sent);
+        if (playsMegapot(msg.sender)) _releaseTickets(MEGA, msg.sender, _scale(sent, msg.sender));
 
         emit Withdrawn(msg.sender);
     }
 
     // ===================================================================== //
-    //                         Megapot opt-in                                //
+    //                       Megapot allocation                              //
     // ===================================================================== //
 
-    /// @notice Also play the Megapot-funded prize, on top of the main one.
+    /// @notice Choose what share of your stake also plays the Megapot-funded prize.
     ///
-    /// @dev    Opting in mints you a ticket range on the `MEGA` cursor covering your *current*
-    ///         balance. It is purely additive: your main-track tickets are untouched, so opting in
-    ///         cannot reduce your odds on the main prize or put your principal at risk. What it
-    ///         does cost is that your share of harvested yield is routed to buying Megapot tickets
-    ///         instead of straight into the main prize — see `harvest`.
+    /// @dev    Zero leaves you in the main draw only; 10,000 puts your whole stake in both games.
+    ///         Whatever you pick, this is **purely additive**: your main-track tickets are never
+    ///         touched, so no allocation can reduce your odds on the main prize or put a unit of
+    ///         principal at risk. What it changes is where your share of harvested yield goes —
+    ///         into the steady main prize, or into buying tickets on a rarer, larger jackpot.
+    ///         Megapot takes a real house edge, so this buys variance, not expected value.
     ///
-    ///         Deposits made after this point mirror onto both tracks automatically. Winnings
-    ///         credited by a claim do not, on either track; fold them in with `restake`.
-    function optIn() external nonReentrant {
-        if (playsMegapot[msg.sender]) revert AlreadyOptedIn();
-        playsMegapot[msg.sender] = true;
+    ///         Raising mints: it tops your `MEGA` range up by the shortfall, leaving the ranges
+    ///         you already hold intact, so a raise creates no dead tickets. It is rate-limited,
+    ///         because minting is the one thing that can inflate a ticket space.
+    ///
+    ///         Lowering only shrinks, and is deliberately never rate-limited — the same reasoning
+    ///         that made opting out free. Charging someone for leaving a game they no longer want
+    ///         to play would just trap them in it.
+    ///
+    ///         Deposits made afterwards mirror onto both tracks at the chosen share automatically.
+    ///         Winnings credited by a claim do not; fold them in with `restake`.
+    function setMegapotAllocation(uint16 bps) external nonReentrant {
+        if (bps > 10_000 || bps % ALLOCATION_STEP != 0) revert InvalidAllocation();
 
-        _compact(MEGA, msg.sender);
+        uint16 old = megapotBps[msg.sender];
+        if (bps == old) revert InvalidAllocation();
 
-        emit MegapotOptIn(msg.sender);
+        // Reshaping `MEGA` ranges below would destroy a `MEGA` prize already won but unclaimed.
+        _settleClaims(msg.sender);
+
+        megapotBps[msg.sender] = bps;
+
+        euint64 target = _stakeOn(MEGA, msg.sender);
+        euint64 live = _liveTickets(MEGA, msg.sender);
+
+        if (bps > old) {
+            _rateLimit(MEGA, msg.sender);
+            // `target - min(target, live)`, i.e. the shortfall, clamped at zero.
+            _allocate(MEGA, msg.sender, FHE.sub(target, FHE.min(target, live)));
+        } else {
+            _releaseTickets(MEGA, msg.sender, FHE.sub(live, FHE.min(live, target)));
+        }
+
+        emit MegapotAllocationSet(msg.sender, bps);
     }
 
-    /// @notice Stop playing the Megapot prize. Your main-track position is untouched.
-    ///
-    /// @dev    Your `MEGA` ranges are dropped, which leaves dead tickets in that space exactly as
-    ///         a withdrawal would — so a `MEGA` draw may roll over. Leaving is always allowed; it
-    ///         is re-joining that costs a reshape, and `optIn` is where the rate limit sits.
-    function optOut() external nonReentrant {
-        if (!playsMegapot[msg.sender]) revert NotOptedIn();
-        playsMegapot[msg.sender] = false;
-
-        // Dropping the ranges is all that is needed: the cursor never rewinds, so the positions
-        // they covered simply become dead. Shrinking them first would burn FHE gas to reach the
-        // same state.
-        //
-        // Deliberately *not* rate-limited. Inflating the ticket space requires minting, and only
-        // `optIn` mints — capping that is what closes the loop. Charging opt-out for the privilege
-        // of leaving would just trap people in a game they no longer want to play.
-        delete _ranges[MEGA][msg.sender];
-
-        emit MegapotOptOut(msg.sender);
+    /// @notice Whether a depositor plays the Megapot prize at all.
+    /// @dev    Derived, so callers that only care about the yes/no need not know about basis
+    ///         points. The allocation itself is `megapotBps`.
+    function playsMegapot(address user) public view returns (bool) {
+        return megapotBps[user] != 0;
     }
 
     // ===================================================================== //
@@ -1111,6 +1140,41 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
         }
     }
 
+    /// @dev `x * megapotBps[user] / 10_000`, exactly.
+    ///
+    ///      A fixed-point multiply-and-shift would be ~680k HCU cheaper, but quantising the
+    ///      multiplier costs up to half a percent at low allocations — "you chose 10% and got
+    ///      9.9976%" is not a number to show a depositor about their own money. The exact form
+    ///      fits comfortably: `x * 10_000` overflows `euint64` only above ~1.8e9 whole tokens,
+    ///      far beyond anything this pool will hold, and the two settings people actually pick
+    ///      most — all in and all out — skip the arithmetic entirely.
+    function _scale(euint64 x, address user) private returns (euint64) {
+        uint16 bps = megapotBps[user];
+        if (bps == 0) return FHE.asEuint64(0);
+        if (bps == 10_000) return x;
+        return FHE.div(FHE.mul(x, uint64(bps)), 10_000);
+    }
+
+    /// @dev The stake a track's tickets are meant to cover for `user`.
+    ///
+    ///      This is the one place the two tracks genuinely differ, and routing every mint through
+    ///      it is what stops `_compact` from quietly promoting a partial allocation to a full one.
+    function _stakeOn(uint8 track, address user) private returns (euint64) {
+        return track == MAIN ? _balance[user] : _scale(_balance[user], user);
+    }
+
+    /// @dev Σ (upper − lower) over a user's live ranges on a track — how many tickets they
+    ///      actually hold, as opposed to how many their balance entitles them to.
+    function _liveTickets(uint8 track, address user) private returns (euint64) {
+        Range[] storage ranges = _ranges[track][user];
+        euint64 total = FHE.asEuint64(0);
+
+        for (uint256 i; i < ranges.length; ++i) {
+            total = FHE.add(total, FHE.sub(ranges[i].upper, ranges[i].lower));
+        }
+        return total;
+    }
+
     /// @dev Allocate `amount` tickets at the top of a track's cursor to `user`.
     function _allocate(uint8 track, address user, euint64 amount) private {
         Track storage t = _tracks[track];
@@ -1142,7 +1206,7 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
     function _compact(uint8 track, address user) private {
         _rateLimit(track, user);
         delete _ranges[track][user];
-        _allocate(track, user, _balance[user]);
+        _allocate(track, user, _stakeOn(track, user));
     }
 
     /// @dev One reshape per track per round. Opting into and out of `MEGA` shares this budget with
