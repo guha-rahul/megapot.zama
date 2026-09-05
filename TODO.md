@@ -47,33 +47,21 @@ been invested yet, though, so no yield has ever been realised on this deployment
 liquidity today. The buffer only starts mattering once `invest()` runs.
 
 **Cost:** `requestDeploy` → KMS decrypt → `finalizeUnwrap` → `invest`, then mint USDC into the
-vault to simulate a yield accrual, then `harvest`. Needs more testnet USDC than the deployer
-currently holds (1 USDC).
+vault to simulate a yield accrual, then `harvest`. Blocked on funds: the deployer wallet is at
+0 USDC.
 
 ## 4 · Bridging is disabled on this testnet pair, by necessity
 
-Base Sepolia's Megapot settles in `TestTokenUSDC`, which CCTP cannot carry. The agent is deployed
-with `tokenMessenger = address(0)` and says so. **This is not a bug and is not fixable on testnet**
-— on mainnet Megapot settles in real USDC and the loop closes. It is listed here so nobody
-mistakes a deliberate hole for an oversight.
+CCTP itself is fine here — 10,000,000-unit burn limit in both directions, `getLocalToken` maps
+correctly, verified against the live contracts in `test/live/Cctp.fork.ts`. The blocker is that
+**Base Sepolia's Megapot settles in `TestTokenUSDC`**, so there is no USDC on that side for CCTP to
+carry home. The agent is therefore deployed with `tokenMessenger = address(0)` and says so.
 
-## 5 · Megapot's real ticket cost is misstated in the app
+**This is not a bug and is not fixable on testnet** — on mainnet Megapot settles in real USDC and
+the loop closes with no contract change. Listed here so nobody mistakes a deliberate hole for an
+oversight, or spends a day debugging the bridge.
 
-`ticketPrice()` returns `1000000`, but the fee is taken *before* tickets are credited, so a ticket
-actually costs `price / (1 - feeBps/10_000)` — **1.176 MPUSDC** on testnet at 15%, and ~1.43 USDC
-on Base mainnet at 30%. The Megapot panel and `ARCHITECTURE.md` §8 both quote the raw price.
-
-**Cost:** one formula, two places.
-
-## 6 · `FLOW.md` cites line numbers that have moved
-
-It references `MegaPot.sol:379`, `:504`, `:473` and others. The contract has been rewritten twice
-since — two tracks, then the allocation slider — so those anchors are wrong. The prose is still
-accurate; only the coordinates are stale.
-
-**Cost:** re-anchor to function names rather than line numbers, so it cannot rot again.
-
-## 7 · No keyed RPC
+## 5 · No keyed RPC
 
 `NEXT_PUBLIC_RPC_URL` is unset, so the app falls back to public endpoints. It now uses a viem
 `fallback` across several per chain and shows an explicit banner when none of them answer, which
@@ -83,7 +71,7 @@ right answer under real load.
 **Cost:** one environment variable in the Vercel project, then a redeploy (it is a
 `NEXT_PUBLIC_` var, so it is inlined at build time and a save alone will not do it).
 
-## 8 · The repository is private
+## 6 · The repository is private
 
 The bounty requires *"open source in a public GitHub repository."* It is currently private by the
 owner's choice.
@@ -103,6 +91,14 @@ supports EIP-2612. Proven on the live deployment.
 repairable by anyone rather than only by a keeper.
 
 **A yield source is wired.** See item 3 for what remains.
+
+**Megapot's real ticket cost is documented.** `ARCHITECTURE.md` §8 now carries both the nominal
+`ticketPrice()` and the actual 1.176 / ~1.43 cost per ticket, with the reason they differ. The app
+never quoted a ticket price, so there was nothing to correct there.
+
+**`FLOW.md` no longer cites line numbers.** Re-anchored to function names, which survive a rewrite.
+
+**The docs no longer blame CCTP.** See item 4 for what is actually true.
 
 **Round #0 stuck in `Claimable`** — obsolete. That round belonged to the previous deployment.
 
