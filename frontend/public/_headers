@@ -1,0 +1,7 @@
+# Cross-origin isolation. TFHE's threaded WASM needs SharedArrayBuffer, which browsers gate behind
+# these two headers. Without them the relayer SDK silently falls back to single-threaded and every
+# encryption gets slower — it degrades quietly rather than failing, so it must be verified, not
+# assumed. Kept in step with the headers() block in next.config.mjs, which a static export drops.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp

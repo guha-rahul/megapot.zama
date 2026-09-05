@@ -76,8 +76,8 @@ whoever can redeploy, which is never the person actually being throttled.
 Setting `NEXT_PUBLIC_RPC_URL` for everyone is still the right answer under real load, and it is
 the one thing here that needs a human with a provider account.
 
-**Cost:** one environment variable in the Vercel project, then a redeploy (it is a
-`NEXT_PUBLIC_` var, so it is inlined at build time and a save alone will not do it).
+**Cost:** set `NEXT_PUBLIC_RPC_URL` before the build, then redeploy — it is inlined at build time,
+so on a static export there is no runtime env to change afterwards.
 
 ## 6 · The repository is private
 

@@ -67,7 +67,11 @@ export default function Home() {
         <div className="hero-stats">
           <div>
             <div className="stat-k">Tickets in play</div>
-            <div className="stat-v num">{formatUsdc(pool.settledTickets, 0)}</div>
+            {/* Same reasoning as the prize bar: the total is a sealed cursor until entries close,
+                and printing 0 would claim nobody has deposited. */}
+            <div className={pool.settledTickets ? "stat-v num" : "stat-v"}>
+              {pool.settledTickets ? formatUsdc(pool.settledTickets, 0) : "sealed"}
+            </div>
           </div>
           <div>
             <div className="stat-k">Round</div>

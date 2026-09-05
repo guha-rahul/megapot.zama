@@ -26,7 +26,7 @@ in it: what is encrypted, what gets decrypted and *where*, what is revealed, and
 
 ## Try it live
 
-**https://megapot-zama.vercel.app** — connect a wallet on Ethereum Sepolia and run the whole
+**https://megapot-zama.pages.dev** — connect a wallet on Ethereum Sepolia and run the whole
 cycle. There is an open round with a prize in it right now.
 
 You need two free things first:
