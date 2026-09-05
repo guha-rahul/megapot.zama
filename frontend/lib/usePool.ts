@@ -4,13 +4,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Address } from "viem";
 import { useAccount, useReadContract, useReadContracts, useWalletClient } from "wagmi";
 
-import { BASE_SEPOLIA_ID, MAIN, addresses, confidentialUsdcAbi, erc20Abi, jackpotAbi, megaPotAbi, ticketAgentAbi } from "./contracts";
+import { BASE_SEPOLIA_ID, MAIN, MEGA, addresses, confidentialUsdcAbi, erc20Abi, jackpotAbi, megaPotAbi, ticketAgentAbi } from "./contracts";
 import { createDecryptSession, encryptAmount, userDecrypt, type DecryptSession } from "./zama";
 
 const REFRESH = 12_000;
 
 /** What one `reveal()` decrypted, returned so callers can diff two of them. */
-export type Snapshot = { balance: bigint; walletBalance: bigint; tickets: bigint };
+export type Snapshot = { balance: bigint; walletBalance: bigint; tickets: bigint; megaTickets: bigint };
 
 /** A ticking clock, so countdowns move without re-fetching anything. */
 export function useNow(intervalMs = 1000) {
@@ -157,6 +157,7 @@ export function usePrivateState() {
   const sessionRef = useRef<DecryptSession | null>(null);
   const [balance, setBalance] = useState<bigint | undefined>();
   const [tickets, setTickets] = useState<bigint | undefined>();
+  const [megaTickets, setMegaTickets] = useState<bigint | undefined>();
   const [walletBalance, setWalletBalance] = useState<bigint | undefined>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -175,6 +176,14 @@ export function usePrivateState() {
     abi: megaPotAbi,
     functionName: "rangesOf",
     args: address ? ([MAIN, address] as const) : undefined,
+    query: { enabled: Boolean(address) },
+  });
+
+  const { data: megaRanges, refetch: refetchMega } = useReadContract({
+    address: addresses.megaPot,
+    abi: megaPotAbi,
+    functionName: "rangesOf",
+    args: address ? ([MEGA, address] as const) : undefined,
     query: { enabled: Boolean(address) },
   });
 
@@ -203,10 +212,11 @@ export function usePrivateState() {
   const refetchHandles = useCallback(() => {
     void refetchBalance();
     void refetchRanges();
+    void refetchMega();
     void refetchWallet();
     void refetchOperator();
     void refetchUsdc();
-  }, [refetchBalance, refetchRanges, refetchWallet, refetchOperator, refetchUsdc]);
+  }, [refetchBalance, refetchRanges, refetchMega, refetchWallet, refetchOperator, refetchUsdc]);
 
   /**
    * Sign once, then decrypt this user's balance, odds and wrapped holdings — all in-browser.
@@ -227,19 +237,21 @@ export function usePrivateState() {
       sessionRef.current = active;
       setSession(active);
 
-      const [balRes, rangeRes, walRes] = await Promise.all([
+      const [balRes, rangeRes, walRes, megaRes] = await Promise.all([
         refetchBalance(),
         refetchRanges(),
         refetchWallet(),
+        refetchMega(),
       ]);
       const bHandle = (balRes.data ?? balanceHandle) as string | undefined;
       const wHandle = (walRes.data ?? walletHandle) as string | undefined;
       const rows = (rangeRes.data ?? ranges ?? []) as readonly { lower: string; upper: string }[];
+      const megaRows = (megaRes.data ?? megaRanges ?? []) as readonly { lower: string; upper: string }[];
 
       const pairs: { handle: string; contractAddress: Address }[] = [];
       if (bHandle) pairs.push({ handle: bHandle, contractAddress: addresses.megaPot });
       if (wHandle) pairs.push({ handle: wHandle, contractAddress: addresses.confidentialUSDC });
-      for (const range of rows) {
+      for (const range of [...rows, ...megaRows]) {
         pairs.push({ handle: range.lower, contractAddress: addresses.megaPot });
         pairs.push({ handle: range.upper, contractAddress: addresses.megaPot });
       }
@@ -251,10 +263,12 @@ export function usePrivateState() {
         balance: at(bHandle),
         walletBalance: at(wHandle),
         tickets: rows.reduce((sum, r) => sum + (at(r.upper) - at(r.lower)), 0n),
+        megaTickets: megaRows.reduce((sum, r) => sum + (at(r.upper) - at(r.lower)), 0n),
       };
       setBalance(snapshot.balance);
       setWalletBalance(snapshot.walletBalance);
       setTickets(snapshot.tickets);
+      setMegaTickets(snapshot.megaTickets);
       return snapshot;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -273,6 +287,8 @@ export function usePrivateState() {
     refetchBalance,
     refetchRanges,
     refetchWallet,
+    refetchMega,
+    megaRanges,
   ]);
 
   /**
@@ -339,6 +355,7 @@ export function usePrivateState() {
     setSession(null);
     setBalance(undefined);
     setTickets(undefined);
+    setMegaTickets(undefined);
     setWalletBalance(undefined);
   }, []);
 
@@ -355,6 +372,7 @@ export function usePrivateState() {
       address,
       balance,
       tickets,
+      megaTickets,
       walletBalance,
       revealAward,
       revealLastWithdrawn,
@@ -375,6 +393,7 @@ export function usePrivateState() {
       address,
       balance,
       tickets,
+      megaTickets,
       walletBalance,
       revealAward,
       revealLastWithdrawn,

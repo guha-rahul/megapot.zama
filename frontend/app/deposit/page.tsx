@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useAccount } from "wagmi";
 
 import { EtaBadge, Guard } from "../../components/Guard";
+import { Allocation } from "../../components/Allocation";
 import { Shell } from "../../components/Shell";
 import { AmountField, TxStatus } from "../../components/TxStatus";
 import { addresses, megaPotAbi } from "../../lib/contracts";
@@ -93,6 +94,8 @@ export default function DepositPage() {
         </div>
 
         <TxStatus state={state} />
+
+        {journey.hasDeposited && <Allocation me={me} />}
 
         {journey.hasDeposited && (
           <div className="status">
