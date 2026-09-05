@@ -6,7 +6,7 @@ import { useAccount } from "wagmi";
 import { Countdown, EtaBadge, Guard } from "../../components/Guard";
 import { Shell } from "../../components/Shell";
 import { TxStatus } from "../../components/TxStatus";
-import { addresses, megaPotAbi } from "../../lib/contracts";
+import { MAIN, addresses, megaPotAbi } from "../../lib/contracts";
 import { formatUsdc } from "../../lib/format";
 import { ETA } from "../../lib/timing";
 import { useJourney } from "../../lib/useJourney";
@@ -54,7 +54,7 @@ export default function ClaimPage() {
           address: addresses.megaPot,
           abi: megaPotAbi,
           functionName: "claim",
-          args: [pool.latestRoundId!],
+          args: [MAIN, pool.latestRoundId!],
           chain: poolChain,
           account: address!,
         });

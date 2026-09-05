@@ -3,7 +3,7 @@
 import { useReadContracts } from "wagmi";
 
 import { Shell } from "../../components/Shell";
-import { ROUND_STATES, addresses, explorerLink, megaPotAbi } from "../../lib/contracts";
+import { MAIN, ROUND_STATES, addresses, explorerLink, megaPotAbi } from "../../lib/contracts";
 import { formatUsdc } from "../../lib/format";
 import { humanDuration } from "../../lib/timing";
 import { useJourney } from "../../lib/useJourney";
@@ -23,7 +23,7 @@ export default function RoundsPage() {
       address: addresses.megaPot,
       abi: megaPotAbi,
       functionName: "getRound" as const,
-      args: [BigInt(i)] as const,
+      args: [MAIN, BigInt(i)] as const,
     })),
     query: { enabled: n > 0, refetchInterval: 20_000 },
   });

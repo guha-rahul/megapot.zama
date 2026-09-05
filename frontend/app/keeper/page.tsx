@@ -7,6 +7,7 @@ import { Countdown, EtaBadge } from "../../components/Guard";
 import { Shell } from "../../components/Shell";
 import { TxStatus } from "../../components/TxStatus";
 import {
+  MAIN,
   ROUND_STATES,
   addresses,
   erc20Abi,
@@ -89,7 +90,7 @@ export default function KeeperPage() {
   /** closeEntries publishes the cursor; finalizeEntries submits its KMS-signed cleartext. */
   const closeAndFinalise = async () => {
     if (id === undefined) return;
-    const closed = await run("Closing entries", () => write("closeEntries", [id]), after);
+    const closed = await run("Closing entries", () => write("closeEntries", [MAIN, id]), after);
     if (!closed) return;
     setState({ text: "Asking the KMS to decrypt the ticket total…", busy: true });
     try {
@@ -98,12 +99,12 @@ export default function KeeperPage() {
         address: addresses.megaPot,
         abi: megaPotAbi,
         functionName: "getRound",
-        args: [id],
+        args: [MAIN, id],
       })) as { cursorSnapshot: string };
       const { value, proof } = await publicDecrypt(fresh.cursorSnapshot);
       await run(
         `Publishing ${formatUsdc(value, 0)} tickets`,
-        () => write("finalizeEntries", [id, value, proof]),
+        () => write("finalizeEntries", [MAIN, id, value, proof]),
         after,
       );
     } catch (e) {
@@ -113,7 +114,7 @@ export default function KeeperPage() {
 
   const sweepAndFinalise = async () => {
     if (id === undefined) return;
-    const swept = await run("Requesting sweep", () => write("requestSweep", [id]), after);
+    const swept = await run("Requesting sweep", () => write("requestSweep", [MAIN, id]), after);
     if (!swept) return;
     setState({ text: "Asking the KMS whether the prize was claimed…", busy: true });
     try {
@@ -122,12 +123,12 @@ export default function KeeperPage() {
         address: addresses.megaPot,
         abi: megaPotAbi,
         functionName: "getRound",
-        args: [id],
+        args: [MAIN, id],
       })) as { unclaimed: string };
       const { value, proof } = await publicDecrypt(fresh.unclaimed);
       await run(
         value === 0n ? "Round was won — settling" : `Rolling over ${formatUsdc(value)} USDC`,
-        () => write("finalizeSweep", [id, value, proof]),
+        () => write("finalizeSweep", [MAIN, id, value, proof]),
         after,
       );
     } catch (e) {
@@ -153,7 +154,8 @@ export default function KeeperPage() {
           account: address!,
         });
         await pc.waitForTransactionReceipt({ hash: h });
-        return write(fn, [value]);
+        // fundPrize is per-track; fundTicketBudget is pool-wide and takes no track.
+        return write(fn, fn === "fundPrize" ? [MAIN, value] : [value]);
       },
       async () => {
         setAmount("");
@@ -213,7 +215,7 @@ export default function KeeperPage() {
             onClick={() =>
               run(
                 "Starting a round",
-                () => write("startRound", [BigInt(Math.floor(Date.now() / 1000) + 300)]),
+                () => write("startRound", [MAIN, BigInt(Math.floor(Date.now() / 1000) + 300)]),
                 after,
               )
             }
@@ -226,7 +228,7 @@ export default function KeeperPage() {
           <button
             disabled={busy || round?.state !== 3}
             onClick={() =>
-              run("Drawing", () => write("draw", [id!, BigInt(Number(window_) * DAY)]), after)
+              run("Drawing", () => write("draw", [MAIN, id!, BigInt(Number(window_) * DAY)]), after)
             }
           >
             Draw

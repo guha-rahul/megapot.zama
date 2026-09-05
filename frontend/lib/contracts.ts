@@ -1,11 +1,39 @@
 import type { Abi, Address } from "viem";
 
+// The pool's own ABIs are generated from the compiled artifacts — see scripts/gen-abi.mjs. They
+// used to be written by hand here, which is how they drifted thirteen functions behind the
+// contract without anything noticing.
+export { megaPotAbi, prizeInboxAbi, confidentialUsdcAbi, yieldVaultAbi } from "./abi/generated";
+
 /**
  * Live testnet deployment. Filled from `deployments/*.json` via `.env.local`.
  * The pool is on Ethereum Sepolia (where the Zama Protocol runs); the lottery leg is on Base
  * Sepolia (where Megapot runs).
  */
 const addr = (v: string | undefined) => (v ?? "") as Address;
+
+/** Track ids, mirroring `MegaPot.MAIN` / `MegaPot.MEGA`. */
+export const MAIN = 0;
+export const MEGA = 1;
+
+/**
+ * Which env vars are missing or malformed.
+ *
+ * `addr()` casts `undefined` to `""`, so without this a forgotten variable surfaces as a failed
+ * read somewhere inside viem rather than as the configuration mistake it is.
+ */
+export function configIssues(): string[] {
+  const required = {
+    NEXT_PUBLIC_MEGAPOT: process.env.NEXT_PUBLIC_MEGAPOT,
+    NEXT_PUBLIC_CUSDC: process.env.NEXT_PUBLIC_CUSDC,
+    NEXT_PUBLIC_USDC: process.env.NEXT_PUBLIC_USDC,
+  };
+  return Object.entries(required).flatMap(([key, value]) => {
+    if (!value) return [`${key} is not set`];
+    if (!/^0x[0-9a-fA-F]{40}$/.test(value)) return [`${key} is not a valid address: ${value}`];
+    return [];
+  });
+}
 
 export const addresses = {
   megaPot: addr(process.env.NEXT_PUBLIC_MEGAPOT),
@@ -41,247 +69,8 @@ export const ROUND_STATES = [
   "Settled",
 ] as const;
 
-export const megaPotAbi = [
-  {
-    type: "function",
-    name: "deposit",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "encAmount", type: "bytes32" },
-      { name: "proof", type: "bytes" },
-    ],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "withdraw",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "encAmount", type: "bytes32" },
-      { name: "proof", type: "bytes" },
-    ],
-    outputs: [],
-  },
-  { type: "function", name: "restake", stateMutability: "nonpayable", inputs: [], outputs: [] },
-  {
-    type: "function",
-    name: "claim",
-    stateMutability: "nonpayable",
-    inputs: [{ name: "roundId", type: "uint256" }],
-    outputs: [],
-  },
 
-  // ciphertext handles
-  {
-    type: "function",
-    name: "confidentialBalanceOf",
-    stateMutability: "view",
-    inputs: [{ name: "user", type: "address" }],
-    outputs: [{ type: "bytes32" }],
-  },
-  {
-    type: "function",
-    name: "lastWithdrawnOf",
-    stateMutability: "view",
-    inputs: [{ name: "user", type: "address" }],
-    outputs: [{ type: "bytes32" }],
-  },
-  {
-    type: "function",
-    name: "rangesOf",
-    stateMutability: "view",
-    inputs: [{ name: "user", type: "address" }],
-    outputs: [
-      {
-        type: "tuple[]",
-        components: [
-          { name: "lower", type: "bytes32" },
-          { name: "upper", type: "bytes32" },
-          { name: "round", type: "uint64" },
-        ],
-      },
-    ],
-  },
 
-  // public state
-  { type: "function", name: "prizeReserve", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] },
-  { type: "function", name: "settledTickets", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] },
-  { type: "function", name: "ticketBudget", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
-  {
-    type: "function",
-    name: "deployedPrincipal",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ type: "uint256" }],
-  },
-  { type: "function", name: "roundsLength", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
-  { type: "function", name: "entryRound", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] },
-  { type: "function", name: "depositsPaused", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
-  { type: "function", name: "megapotSpendBps", stateMutability: "view", inputs: [], outputs: [{ type: "uint16" }] },
-  { type: "function", name: "MAX_RANGES", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
-  {
-    type: "function",
-    name: "canCompact",
-    stateMutability: "view",
-    inputs: [{ name: "user", type: "address" }],
-    outputs: [{ type: "bool" }],
-  },
-  {
-    type: "function",
-    name: "hasClaimed",
-    stateMutability: "view",
-    inputs: [
-      { name: "roundId", type: "uint256" },
-      { name: "user", type: "address" },
-    ],
-    outputs: [{ type: "bool" }],
-  },
-  {
-    type: "function",
-    name: "getRound",
-    stateMutability: "view",
-    inputs: [{ name: "roundId", type: "uint256" }],
-    outputs: [
-      {
-        type: "tuple",
-        components: [
-          { name: "drawTime", type: "uint64" },
-          { name: "claimDeadline", type: "uint64" },
-          { name: "totalTickets", type: "uint64" },
-          { name: "prize", type: "uint64" },
-          { name: "state", type: "uint8" },
-          { name: "cursorSnapshot", type: "bytes32" },
-          { name: "ticket", type: "bytes32" },
-          { name: "unclaimed", type: "bytes32" },
-        ],
-      },
-    ],
-  },
-  { type: "function", name: "keeper", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
-  { type: "function", name: "owner", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
-  {
-    type: "function",
-    name: "startRound",
-    stateMutability: "nonpayable",
-    inputs: [{ name: "drawTime", type: "uint64" }],
-    outputs: [{ type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "closeEntries",
-    stateMutability: "nonpayable",
-    inputs: [{ name: "roundId", type: "uint256" }],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "finalizeEntries",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "roundId", type: "uint256" },
-      { name: "totalTickets", type: "uint64" },
-      { name: "decryptionProof", type: "bytes" },
-    ],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "draw",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "roundId", type: "uint256" },
-      { name: "claimWindow", type: "uint64" },
-    ],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "requestSweep",
-    stateMutability: "nonpayable",
-    inputs: [{ name: "roundId", type: "uint256" }],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "finalizeSweep",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "roundId", type: "uint256" },
-      { name: "unclaimedAmount", type: "uint64" },
-      { name: "decryptionProof", type: "bytes" },
-    ],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "fundPrize",
-    stateMutability: "nonpayable",
-    inputs: [{ name: "amount", type: "uint256" }],
-    outputs: [{ type: "uint64" }],
-  },
-  {
-    type: "function",
-    name: "fundTicketBudget",
-    stateMutability: "nonpayable",
-    inputs: [{ name: "amount", type: "uint256" }],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "bridgeToMegapot",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "amount", type: "uint256" },
-      { name: "maxFee", type: "uint256" },
-    ],
-    outputs: [],
-  },
-] as const satisfies Abi;
-
-export const prizeInboxAbi = [
-  { type: "function", name: "flush", stateMutability: "nonpayable", inputs: [], outputs: [{ type: "uint256" }] },
-  { type: "function", name: "pending", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
-] as const satisfies Abi;
-
-export const confidentialUsdcAbi = [
-  {
-    type: "function",
-    name: "wrap",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "to", type: "address" },
-      { name: "amount", type: "uint256" },
-    ],
-    outputs: [{ type: "bytes32" }],
-  },
-  {
-    type: "function",
-    name: "setOperator",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "operator", type: "address" },
-      { name: "until", type: "uint48" },
-    ],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "isOperator",
-    stateMutability: "view",
-    inputs: [
-      { name: "holder", type: "address" },
-      { name: "spender", type: "address" },
-    ],
-    outputs: [{ type: "bool" }],
-  },
-  {
-    type: "function",
-    name: "confidentialBalanceOf",
-    stateMutability: "view",
-    inputs: [{ name: "account", type: "address" }],
-    outputs: [{ type: "bytes32" }],
-  },
-] as const satisfies Abi;
 
 export const erc20Abi = [
   {

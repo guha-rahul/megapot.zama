@@ -4,15 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Address } from "viem";
 import { useAccount, useReadContract, useReadContracts, useWalletClient } from "wagmi";
 
-import {
-  BASE_SEPOLIA_ID,
-  addresses,
-  confidentialUsdcAbi,
-  erc20Abi,
-  jackpotAbi,
-  megaPotAbi,
-  ticketAgentAbi,
-} from "./contracts";
+import { BASE_SEPOLIA_ID, MAIN, addresses, confidentialUsdcAbi, erc20Abi, jackpotAbi, megaPotAbi, ticketAgentAbi } from "./contracts";
 import { createDecryptSession, encryptAmount, userDecrypt, type DecryptSession } from "./zama";
 
 const REFRESH = 12_000;
@@ -51,10 +43,10 @@ export function usePublicState() {
       { ...base, functionName: "prizeReserve" },
       { ...base, functionName: "settledTickets" },
       { ...base, functionName: "deployedPrincipal" },
-      { ...base, functionName: "roundsLength" },
+      { ...base, functionName: "roundsLength", args: [MAIN] },
       { ...base, functionName: "entryRound" },
       { ...base, functionName: "depositsPaused" },
-      { ...base, functionName: "megapotSpendBps" },
+      { ...base, functionName: "megapotShareBps" },
       { ...base, functionName: "ticketBudget" },
     ],
     query: { refetchInterval: REFRESH, enabled },
@@ -66,7 +58,7 @@ export function usePublicState() {
   const { data: round, refetch: refetchRound } = useReadContract({
     ...base,
     functionName: "getRound",
-    args: latestRoundId !== undefined ? [latestRoundId] : undefined,
+    args: latestRoundId !== undefined ? [MAIN, latestRoundId] : undefined,
     query: { enabled: enabled && latestRoundId !== undefined, refetchInterval: REFRESH },
   });
 
@@ -182,7 +174,8 @@ export function usePrivateState() {
     address: addresses.megaPot,
     abi: megaPotAbi,
     functionName: "rangesOf",
-    ...forUser,
+    args: address ? ([MAIN, address] as const) : undefined,
+    query: { enabled: Boolean(address) },
   });
 
   const { data: walletHandle, refetch: refetchWallet } = useReadContract({
@@ -343,12 +336,12 @@ export type PrivateState = ReturnType<typeof usePrivateState>;
 export type MegapotLeg = ReturnType<typeof useMegapotLeg>;
 
 /** Whether the connected user has already claimed a given round. */
-export function useHasClaimed(roundId: bigint | undefined, user?: Address) {
+export function useHasClaimed(roundId: bigint | undefined, user?: Address, track: number = MAIN) {
   const { data, refetch } = useReadContract({
     address: addresses.megaPot,
     abi: megaPotAbi,
     functionName: "hasClaimed",
-    args: roundId !== undefined && user ? [roundId, user] : undefined,
+    args: roundId !== undefined && user ? [track, roundId, user] : undefined,
     query: { enabled: roundId !== undefined && Boolean(user) },
   });
   return { hasClaimed: data as boolean | undefined, refetch };

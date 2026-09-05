@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "preflight": "node scripts/preflight.mjs"
+    "preflight": "node scripts/preflight.mjs",
+    "abi:gen": "node scripts/gen-abi.mjs",
+    "abi:check": "node scripts/gen-abi.mjs && git diff --exit-code --quiet lib/abi/generated.ts || (echo 'lib/abi/generated.ts is stale \u2014 commit the regenerated file' && exit 1)"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.62.0",

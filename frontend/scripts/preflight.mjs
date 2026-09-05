@@ -18,7 +18,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { JsonRpcProvider, getAddress } from "ethers";
+import { JsonRpcProvider, getAddress, id } from "ethers";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -190,6 +190,44 @@ console.log("\n\x1b[1m6 · Source guards\x1b[0m");
   zama.includes("instancePromise = null")
     ? ok("a failed init is not cached (retryable)")
     : bad("a rejected init would be cached forever, poisoning the tab");
+}
+
+
+// ---------------------------------------------- 6 · the deployment answers our ABI
+console.log("\n\x1b[1m7 · The deployed pool answers our ABI\x1b[0m");
+{
+  // The class of bug this catches is the one that actually happened: the ABI and the contract
+  // source were perfectly consistent with each other, and the *deployment* was behind both. No
+  // amount of type-checking sees that — only asking the chain does.
+  // Read the artifact rather than the generated .ts — same ABI, and Node need not parse
+  // TypeScript. `npm run abi:check` is what keeps the generated file honest against it.
+  const abi = JSON.parse(
+    readFileSync(join(here, "..", "..", "artifacts/contracts/MegaPot.sol/MegaPot.json"), "utf8"),
+  ).abi;
+
+  const code = await sepolia.getCode(env.NEXT_PUBLIC_MEGAPOT);
+  const fns = abi.filter((e) => e.type === "function");
+  const missing = [];
+
+  for (const fn of fns) {
+    const sig = `${fn.name}(${(fn.inputs ?? []).map(typeOf).join(",")})`;
+    const selector = id(sig).slice(2, 10);
+    if (!code.includes(selector)) missing.push(sig);
+  }
+
+  missing.length === 0
+    ? ok(`all ${fns.length} ABI functions have a selector in the deployed bytecode`)
+    : bad(
+        `${missing.length} of ${fns.length} ABI functions are absent from the deployed contract — ` +
+          `the deployment is behind the source. First few: ${missing.slice(0, 4).join(", ")}`,
+      );
+}
+
+/** Canonical type string for a selector, expanding tuples. */
+function typeOf(input) {
+  if (!input.type.startsWith("tuple")) return input.type;
+  const inner = input.components.map(typeOf).join(",");
+  return input.type.replace("tuple", `(${inner})`);
 }
 
 // ---------------------------------------------------------------- verdict
