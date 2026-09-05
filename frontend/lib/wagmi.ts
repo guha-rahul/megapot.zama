@@ -1,21 +1,25 @@
 "use client";
 
 import { createConfig, http } from "wagmi";
-import { hardhat, sepolia } from "wagmi/chains";
+import { baseSepolia, sepolia } from "wagmi/chains";
 
-import { chainId } from "./contracts";
+/**
+ * Both chains are registered: the confidential pool lives on Ethereum Sepolia (the Zama Protocol
+ * is not deployed on Base), the Megapot leg on Base Sepolia. Reads for the Base side pass
+ * `chainId` explicitly, so the app shows both halves without asking the user to switch.
+ *
+ * Wallets are discovered over EIP-6963 rather than through the `wagmi/connectors` barrel, which
+ * drags in the whole Coinbase account SDK for a connector this app never uses.
+ */
+export const poolChain = sepolia;
+export const megapotChain = baseSepolia;
 
-/** The chain the configured deployment lives on. Both are registered so the connector can switch. */
-export const activeChain = chainId === hardhat.id ? hardhat : sepolia;
-
-// Wallets are discovered over EIP-6963 rather than via the `wagmi/connectors` barrel, which drags
-// in the whole Coinbase account SDK (and its optional native deps) for a connector we never use.
 export const wagmiConfig = createConfig({
-  chains: [sepolia, hardhat],
+  chains: [sepolia, baseSepolia],
   multiInjectedProviderDiscovery: true,
   transports: {
-    [sepolia.id]: http(chainId === sepolia.id ? process.env.NEXT_PUBLIC_RPC_URL : undefined),
-    [hardhat.id]: http(chainId === hardhat.id ? process.env.NEXT_PUBLIC_RPC_URL : undefined),
+    [sepolia.id]: http(process.env.NEXT_PUBLIC_RPC_URL || undefined),
+    [baseSepolia.id]: http(process.env.NEXT_PUBLIC_BASE_RPC_URL || undefined),
   },
   ssr: true,
 });

@@ -10,21 +10,62 @@ import type { Address, WalletClient } from "viem";
 
 const ZERO_HANDLE = "0x0000000000000000000000000000000000000000000000000000000000000000";
 
+/** The SDK reads chain state directly; keep that pinned to Sepolia regardless of wallet state. */
+const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com";
+
 export const isZeroHandle = (handle: string) => !handle || handle === ZERO_HANDLE;
 
 let instancePromise: Promise<FhevmInstance> | null = null;
+let sdkReady: Promise<void> | null = null;
+
+/**
+ * Initialise the TFHE WASM exactly once.
+ *
+ * `initSDK()` is not idempotent — a second call panics inside the WASM with
+ * "called `Result::unwrap_throw()` on an `Err` value". React StrictMode double-invokes effects in
+ * development, so an unguarded call fails on the second render. Threaded init also needs
+ * SharedArrayBuffer, which requires cross-origin isolation; fall back to a single thread rather
+ * than dying where that is unavailable.
+ */
+function ensureSdk(mod: { initSDK: (opts?: { thread?: number }) => Promise<unknown> }): Promise<void> {
+  if (!sdkReady) {
+    sdkReady = mod
+      .initSDK()
+      .then(() => undefined)
+      .catch(async () => {
+        await mod.initSDK({ thread: 1 });
+      });
+  }
+  return sdkReady;
+}
 
 /** Lazily boot the relayer SDK (it loads a multi-megabyte TFHE WASM bundle — do it once). */
 export async function getFhevm(): Promise<FhevmInstance> {
   if (!instancePromise) {
     instancePromise = (async () => {
-      const { initSDK, createInstance, SepoliaConfig } = await import("@zama-fhe/relayer-sdk/bundle");
-      await initSDK();
-      return createInstance({
-        ...SepoliaConfig,
-        network: (window as unknown as { ethereum: unknown }).ethereum as never,
-      });
-    })();
+      // `/web` is the real ESM build. `/bundle` is a CDN shim whose entire body is
+      // `export const initSDK = window.relayerSDK.initSDK` — it assumes a <script> tag has
+      // already installed the UMD global, so under a bundler it throws
+      // "Cannot read properties of undefined (reading 'initSDK')".
+      const mod = await import("@zama-fhe/relayer-sdk/web");
+      await ensureSdk(mod);
+
+      // Pin the SDK's chain reads to an RPC rather than `window.ethereum`.
+      //
+      // The SDK builds an ethers BrowserProvider from whatever it is handed, so passing the wallet
+      // makes every Zama contract lookup follow the wallet's *current* network. One tab left on
+      // the wrong chain and `eip712Domain()` hits an address with no code, returning `0x` —
+      // surfacing as "could not decode result data (value=0x, method=eip712Domain)".
+      //
+      // Nothing here needs to sign: encrypted inputs and user-decryption signatures are produced
+      // through our own wallet client. So the instance only ever needs read access to Sepolia.
+      return mod.createInstance({ ...mod.SepoliaConfig, network: RPC_URL });
+    })().catch((e) => {
+      // Do not cache a rejection: a transient relayer/RPC hiccup would otherwise poison every
+      // later call for the lifetime of the tab.
+      instancePromise = null;
+      throw e;
+    });
   }
   return instancePromise;
 }
@@ -131,4 +172,19 @@ function toHex(bytes: Uint8Array | string): string {
   return `0x${Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("")}`;
+}
+
+/**
+ * Publicly decrypt a handle a contract has marked `makePubliclyDecryptable`, returning the
+ * cleartext together with the KMS proof that authorises it on-chain.
+ *
+ * Unlike a user decryption, the result is meant to become public: a threshold of KMS nodes signs
+ * it, and `FHE.checkSignatures` verifies that signature rather than trusting the caller. Anyone
+ * can therefore finalise one of these.
+ */
+export async function publicDecrypt(handle: string): Promise<{ value: bigint; proof: `0x${string}` }> {
+  const fhevm = await getFhevm();
+  const res = await fhevm.publicDecrypt([handle]);
+  const value = Object.values(res.clearValues)[0];
+  return { value: BigInt(value as bigint), proof: res.decryptionProof as `0x${string}` };
 }
