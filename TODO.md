@@ -18,15 +18,23 @@ piecemeal on the previous deployment, but not yet start-to-finish on this one.
 the draw time is brought forward. Worth doing before anyone judges it, because a `Settled` round in
 the history table is the difference between "it works" and "it says it works".
 
-## 2 · The `MEGA` track has never been drawn
+## 2 · The `MEGA` track is settled but has never been drawn
 
-`setMegapotAllocation` is proven on-chain — 25% on the live pool mints a `MEGA` range as expected —
-but the second track has never had entries closed or a draw run, so `megapotShareBps()` still
-returns 0. That is *correct*: the split needs both tracks' ticket totals revealed, and only one has
-been. It does mean the Megapot half of the product is untested outside the local suite.
+Progress: `setMegapotAllocation(2500)` mints a `MEGA` range on the live pool, and round 0 on that
+track has been opened, closed and finalised — so the two-phase KMS reveal
+(`closeEntries` → `publicDecrypt` → `finalizeEntries`) is proven on this deployment. It revealed
+**0.25 tickets**.
 
-**Cost:** the same four keeper calls again, against track 1, plus a prize in the `MEGA` reserve to
-draw for.
+That number is worth reading carefully, because it is the documented model behaving exactly as
+described: 0.25 tickets were minted at a 25% allocation, then a withdrawal released half of them —
+and the cursor does not rewind, so the revealed total is *gross mints including dead tickets*, not
+live stake. This is the drift described under `harvest`, visible on-chain for the first time.
+
+What remains is the draw itself, which needs a prize in the `MEGA` reserve. The deployer wallet is
+at 0 USDC, so this is blocked on funds rather than on code.
+
+**Cost:** any amount of Sepolia USDC into `fundPrize(1, …)`, then `draw` → `claim` →
+`requestSweep` → `finalizeSweep`.
 
 ## 3 · The yield loop is wired but has never actually earned
 

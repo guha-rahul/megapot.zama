@@ -226,7 +226,12 @@ export default function KeeperPage() {
             Close entries + publish total
           </button>
           <button
-            disabled={busy || round?.state !== 3}
+            disabled={busy || round?.state !== 3 || !(pool.prizeReserve ?? 0n)}
+            title={
+              round?.state === 3 && !(pool.prizeReserve ?? 0n)
+                ? "The prize reserve is empty — fund it below before drawing."
+                : undefined
+            }
             onClick={() =>
               run("Drawing", () => write("draw", [MAIN, id!, BigInt(Number(window_) * DAY)]), after)
             }
@@ -237,6 +242,12 @@ export default function KeeperPage() {
             Sweep + settle
           </button>
         </div>
+        {round?.state === 3 && !(pool.prizeReserve ?? 0n) && (
+          <div className="status">
+            Entries are settled and this round is ready, but the prize reserve is empty — a draw
+            with nothing to award would revert. Fund the prize below first.
+          </div>
+        )}
         <div className="eta-why">
           Publishing and sweeping each need a KMS round trip — {ETA.publicDecrypt.label}.{" "}
           {ETA.publicDecrypt.because}

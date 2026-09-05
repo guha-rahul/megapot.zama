@@ -79,6 +79,13 @@ const REVERTS: Record<string, string> = {
   YieldSourceNotSet: "No yield venue is wired on this deployment.",
   BufferFull: "The withdrawal buffer is already at its target.",
   NoYield: "There is no surplus to harvest yet.",
+  NoPrize: "This track has no prize reserve, so there is nothing to draw for. Fund it first.",
+  NoTickets: "Nobody held a ticket when entries closed, so there is nothing to draw between.",
+  PreviousRoundLive: "The previous round has not settled yet — sweep it before opening another.",
+  InsufficientPrincipal: "More was requested than is currently deployed to the yield venue.",
+  ZeroAmountFunded: "Enter an amount greater than zero.",
+  BudgetExceeded: "That is more than the ticket budget holds.",
+  MegapotRouteNotSet: "No Megapot route is wired on this deployment.",
   OnlyKeeper: "Only the pool's keeper or owner can do that.",
   UnknownTrack: "That prize track does not exist.",
   // ERC-7984 / ConfidentialUSDC
