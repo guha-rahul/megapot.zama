@@ -26,10 +26,14 @@ export default function SetupPage() {
   const { run, state, busy } = useTx();
   const [amount, setAmount] = useState("");
   const publicClientReady = Boolean(address);
+  const alreadyAuthorised = me.isOperator === true;
 
+  // `wrapAndAuthorize` does the wrap and the operator grant in one call. It has to live on the
+  // token rather than in a helper: `setOperator` keys off `msg.sender`, so a contract calling it
+  // would authorise an operator for itself, not for the caller.
   const wrap = () =>
     run(
-      "Wrapping USDC into cUSDC",
+      alreadyAuthorised ? "Wrapping USDC into cUSDC" : "Wrapping and authorising",
       async () => {
         const { getPublicClient, getWalletClient } = await import("../../lib/clients");
         const pc = getPublicClient();
@@ -53,14 +57,23 @@ export default function SetupPage() {
           });
           await pc.waitForTransactionReceipt({ hash: h });
         }
-        return wc.writeContract({
-          address: addresses.confidentialUSDC,
-          abi: confidentialUsdcAbi,
-          functionName: "wrap",
-          args: [address!, value],
-          chain: poolChain,
-          account: address!,
-        });
+        return alreadyAuthorised
+          ? wc.writeContract({
+              address: addresses.confidentialUSDC,
+              abi: confidentialUsdcAbi,
+              functionName: "wrap",
+              args: [address!, value],
+              chain: poolChain,
+              account: address!,
+            })
+          : wc.writeContract({
+              address: addresses.confidentialUSDC,
+              abi: confidentialUsdcAbi,
+              functionName: "wrapAndAuthorize",
+              args: [address!, value, addresses.megaPot, FOREVER],
+              chain: poolChain,
+              account: address!,
+            });
       },
       () => {
         setAmount("");
@@ -92,8 +105,8 @@ export default function SetupPage() {
         <div className="eyebrow">Step {stepNumber("setup")}</div>
         <h1>Set up your confidential balance</h1>
         <p>
-          Two one-time actions. After this, every deposit and withdrawal you make moves an amount
-          nobody else can read.
+          Get the test token, then wrap it once. After this, every deposit and withdrawal you make
+          moves an amount nobody else can read.
         </p>
       </div>
 
@@ -157,8 +170,11 @@ export default function SetupPage() {
             {me.isOperator ? <span className="chip chip-mint">done</span> : <EtaBadge eta={ETA.tx} />}
           </div>
           <p className="card-hint">
-            One approval so the pool can pull your encrypted deposits. It never sees the amounts —
-            only ciphertext handles it is permitted to compute on.
+            The pool needs permission to pull your encrypted deposits. It never sees the amounts —
+            only ciphertext handles it is permitted to compute on.{" "}
+            {me.isOperator
+              ? "Granted."
+              : "Wrapping above grants this in the same transaction, so you should not need this button."}
           </p>
           <button
             className="primary block"
@@ -168,7 +184,10 @@ export default function SetupPage() {
             {me.isOperator ? "Authorised ✓" : "Authorise the pool"}
           </button>
           {!me.hasWrapped && !me.isOperator && (
-            <div className="status">Wrap something first — there is nothing to authorise yet.</div>
+            <div className="status">
+              Nothing to do yet — wrap above and this is granted along with it. The button is a
+              fallback for a balance wrapped before the pool existed.
+            </div>
           )}
         </div>
 

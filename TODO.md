@@ -91,9 +91,11 @@ only matches are the well-known public hardhat test mnemonic and an empty placeh
 
 ## Closed
 
-**Wrap and authorise are one transaction.** `ConfidentialUSDC.wrapAndAuthorize` collapses
-`wrap` + `setOperator`, and `wrapWithPermit` folds the ERC-20 approval in too where the token
-supports EIP-2612. Proven on the live deployment.
+**Wrap and authorise are one transaction, in the app too.** `ConfidentialUSDC.wrapAndAuthorize`
+collapses `wrap` + `setOperator`, and `wrapWithPermit` folds the ERC-20 approval in as well where
+the token supports EIP-2612. Proven on the live deployment, and `/setup` now calls it — a
+first-time depositor signs the approval and one wrap, rather than three transactions. The separate
+"authorise" button survives only as a fallback for a balance wrapped before the pool existed.
 
 **Withdraw is "at any time" for real.** `topUpBuffer()` is permissionless, so a short buffer is
 repairable by anyone rather than only by a keeper.
