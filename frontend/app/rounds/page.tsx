@@ -33,13 +33,15 @@ export default function RoundsPage() {
   return (
     <Shell pool={pool} journey={journey} showRail={false}>
       <div className="page-head">
-        <div className="eyebrow">Transparency</div>
-        <h1>Round history</h1>
+        <div className="eyebrow">The draw</div>
+        <h1>Draws</h1>
         <p>
           Every draw the pool has run. Prizes and ticket totals are public; who won each one is not,
           and never becomes so.
         </p>
       </div>
+
+      <DrawStatus pool={pool} now={now} />
 
       <div className="card">
         {n === 0 ? (
@@ -71,8 +73,12 @@ export default function RoundsPage() {
                         #{r.id}
                       </a>
                     </td>
-                    <td>{formatUsdc(r.prize)}</td>
-                    <td>{formatUsdc(r.totalTickets, 0)}</td>
+                    {/* A round's prize is assigned at draw time, from whatever the reserve holds
+                        then. Before that it is genuinely undecided, not zero. */}
+                    <td>{r.state >= 4 ? formatUsdc(r.prize) : "at draw"}</td>
+                    {/* A round that has not closed has no revealed total yet — 0 would read as
+                        "nobody entered". */}
+                    <td>{r.totalTickets ? formatUsdc(r.totalTickets, 0) : "sealed"}</td>
                     <td>
                       <span className={`chip ${windowOpen ? "chip-gold" : ""}`}>
                         {windowOpen && <span className="dot dot-pulse" />}
@@ -106,5 +112,57 @@ export default function RoundsPage() {
         </p>
       </div>
     </Shell>
+  );
+}
+
+/**
+ * Why you cannot run the draw yourself.
+ *
+ * The nav sends people here under the word "Draw", so the page owes them an answer about the
+ * current round rather than only a table of past ones. Nobody arriving should have to infer from
+ * an absence of buttons that the draw is keeper-gated — and the reason it is gated is worth
+ * saying, because it is the opposite of the usual one: the keeper cannot influence the outcome,
+ * only its timing.
+ */
+function DrawStatus({ pool, now }: { pool: ReturnType<typeof usePublicState>; now: number }) {
+  const round = pool.round;
+  if (!round) return null;
+
+  const drawsIn = Number(round.drawTime) - now;
+  const state = ROUND_STATES[round.state] ?? "unknown";
+
+  const explanation =
+    round.state === 1
+      ? drawsIn > 0
+        ? `Entries are open. The draw becomes possible in ${humanDuration(drawsIn)}, once the round's draw time passes — it is fixed on-chain and cannot be brought forward.`
+        : "The draw time has passed. The keeper closes entries next, which reveals the ticket total and nothing else."
+      : round.state === 2
+        ? "Entries are closed and the ticket total is being revealed through Zama's KMS. That takes a moment and anyone can complete it."
+        : round.state === 3
+          ? drawsIn > 0
+            ? `Ready to draw in ${humanDuration(drawsIn)}.`
+            : "Ready to draw now. Waiting on the keeper."
+          : round.state === 4
+            ? "Drawn. The winning ticket is encrypted and readable by nobody — claim to find out whether it was yours."
+            : "This round is settled.";
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h2>Round #{String(pool.latestRoundId)}</h2>
+        <span className="chip">{state}</span>
+      </div>
+      <p className="card-hint" style={{ margin: "4px 0 0" }}>{explanation}</p>
+      <div className="status">
+        {/* `.status` is a flex row, so its children must be a single element or the sentence
+            breaks into columns. */}
+        <span>
+          Running a draw is restricted to the pool&apos;s keeper, but that buys them no advantage:
+          the winning ticket comes from <code className="mono">FHE.randEuint64()</code> and is
+          granted no decryption rights at all, so the keeper cannot read it, predict it, or pick
+          who wins. What they control is <em>when</em> a round is drawn, not <em>how</em>.
+        </span>
+      </div>
+    </div>
   );
 }
