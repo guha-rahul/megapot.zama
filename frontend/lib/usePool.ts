@@ -38,7 +38,7 @@ export function usePublicState() {
   const base = { address: addresses.megaPot, abi: megaPotAbi } as const;
   const enabled = Boolean(addresses.megaPot);
 
-  const { data, refetch, isLoading } = useReadContracts({
+  const { data, refetch, isLoading, isError, error: readError } = useReadContracts({
     contracts: [
       { ...base, functionName: "prizeReserve" },
       { ...base, functionName: "settledTickets" },
@@ -62,8 +62,17 @@ export function usePublicState() {
     query: { enabled: enabled && latestRoundId !== undefined, refetchInterval: REFRESH },
   });
 
+  // A chain read that fails is not the same as one that returned nothing, and the app has to be
+  // able to tell the user which happened. Without this every RPC failure renders as an em dash.
+  const unreachable = isError
+    ? readError instanceof Error
+      ? readError.message
+      : "The RPC did not answer."
+    : null;
+
   return {
     isLoading,
+    unreachable,
     prizeReserve: data?.[0]?.result as bigint | undefined,
     settledTickets: data?.[1]?.result as bigint | undefined,
     deployedPrincipal: data?.[2]?.result as bigint | undefined,

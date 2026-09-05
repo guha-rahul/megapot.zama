@@ -32,6 +32,7 @@ export function Shell({
       <Nav />
       <main className="shell" style={{ maxWidth: 820 }}>
         <div className="stack">
+          {pool.unreachable && <Unreachable detail={pool.unreachable} />}
           <PrizeBar pool={pool} />
           {showRail && journey && <StepRail journey={journey} />}
           {children}
@@ -39,6 +40,26 @@ export function Shell({
         <Footer />
       </main>
     </>
+  );
+}
+
+/**
+ * Say that the chain is unreachable, rather than rendering every figure as an em dash and letting
+ * the user decide whether the app is broken or the pool is simply empty.
+ */
+function Unreachable({ detail }: { detail: string }) {
+  return (
+    <div className="status status-error">
+      <span>
+        <strong style={{ color: "var(--text)" }}>Cannot reach Sepolia right now.</strong> Public RPC
+        endpoints rate-limit, and this app polls. Everything below is stale or blank for that
+        reason, not because the pool is empty — your funds are unaffected either way. It retries on
+        its own; a page refresh usually picks a healthier node.
+        <span className="mono" style={{ display: "block", marginTop: 6, opacity: 0.7 }}>
+          {detail.split("\n")[0].slice(0, 160)}
+        </span>
+      </span>
+    </div>
   );
 }
 
