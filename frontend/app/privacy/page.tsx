@@ -76,6 +76,22 @@ export default function PrivacyPage() {
           anonymity set at all, and correlation over time is a real attack on a thin pool. Claim gas
           also scales with how many ticket ranges you hold — never with whether you won.
         </p>
+        <p className="card-hint" style={{ marginBottom: 0 }}>
+          <strong>Your Megapot allocation is public on purpose.</strong> Anyone can read that you
+          chose 25%; nobody can read 25% <em>of what</em>. It has to be plaintext because the yield
+          split is computed from the two tracks&apos; public ticket totals, and that ratio is the
+          only thing keeping the split fair between depositors who opted in and those who did not.
+          It snaps to quarters so a choice lands in a bucket shared with other people rather than
+          becoming a fingerprint — but if you are the only one who changes allocation between two
+          round closes, the movement in the Megapot ticket total is yours, and the percentage is
+          known, which narrows your balance. Change it in company, not in isolation.
+        </p>
+        <p className="card-hint" style={{ marginBottom: 0 }}>
+          <strong>The wrap boundary is public.</strong> Turning USDC into cUSDC, and back again, is
+          an ordinary ERC-20 transfer of a visible size. Encryption protects the ledger{" "}
+          <em>between</em> those two edges, not the edges themselves — so wrapping exactly what you
+          deposit, or unwrapping a large amount shortly after a win, links the two.
+        </p>
       </div>
     </Shell>
   );
