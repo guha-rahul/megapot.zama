@@ -426,9 +426,16 @@ task("megapot:balance", "Decrypt your own pool balance and odds")
       tickets += upper - lower;
     }
 
+    // The denominator only exists once entries close and the cursor total is revealed. Before
+    // that your odds are not zero, they are simply not yet determined — printing "0.00%" would be
+    // a wrong answer where "not yet" is the right one.
     const total = await p.settledTickets();
-    const odds = total > 0n ? (Number(tickets) / Number(total)) * 100 : 0;
+    const odds =
+      total > 0n
+        ? `${((Number(tickets) / Number(total)) * 100).toFixed(2)}% odds`
+        : "odds are set when entries close for this round";
+
     console.log(`${signer.address}`);
     console.log(`  balance : ${Number(balance) / 1e6} USDC   (encrypted on-chain)`);
-    console.log(`  tickets : ${Number(tickets) / 1e6} of ${Number(total) / 1e6}  →  ${odds.toFixed(2)}% odds`);
+    console.log(`  tickets : ${Number(tickets) / 1e6}${total > 0n ? ` of ${Number(total) / 1e6}` : ""}  →  ${odds}`);
   });

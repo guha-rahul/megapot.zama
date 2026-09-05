@@ -2,132 +2,104 @@
 
 Open work, in rough priority order. Each item says what it costs, so nothing here is a surprise.
 
----
-
-## 1 · Collapse wrap + authorise into one transaction — needs redeploy
-
-**Today a new depositor signs three transactions before they own anything:**
-
-| # | Call | Contract |
-| --- | --- | --- |
-| 1 | `approve(cUSDC, amount)` | USDC |
-| 2 | `wrap(to, amount)` | ConfidentialUSDC |
-| 3 | `setOperator(pool, until)` | ConfidentialUSDC |
-
-Steps 2 and 3 are both on **ConfidentialUSDC, which is ours** — deployed from
-`contracts/token/ConfidentialUSDC.sol` by `0xcF1B8469…6B43` (creation tx
-`0x4e09188a…92ec`). Zama owns the coprocessor, ACL and KMS; it does not own this token.
-
-### The change
-
-```solidity
-/// Wrap and authorise a spender in one call. `setOperator` keys off msg.sender, so this can only
-/// live on the token itself — a helper contract would set the operator for *itself*, not the user.
-function wrapAndAuthorize(address to, uint256 amount, address operator, uint48 until) external {
-    wrap(to, amount);
-    _setOperator(msg.sender, operator, until);
-}
-```
-
-Pair it with **EIP-2612 `permit`**, which Sepolia USDC supports — verified on-chain:
-`version() = 2`, `DOMAIN_SEPARATOR()`, `nonces()` and `permit(...)` all present. That turns the
-approval into a free off-chain signature.
-
-| | Transactions | Wallet prompts |
-| --- | --- | --- |
-| Today | 3 | 3 |
-| `wrapAndAuthorize` | 2 | 2 |
-| **+ permit** | **1** | 2 (one gasless) |
-
-### Cost
-
-- Redeploy `ConfidentialUSDC`, **and** `MegaPot` — the pool holds `cToken` as `immutable`.
-- New addresses in `deployments/sepolia.json` and `frontend/.env.local`.
-- The ~6 cUSDC currently wrapped must be re-wrapped. No depositor funds are stranded; the only
-  live position is the keeper's 5.
-
-### Alternative that needs no redeploy
-
-**EIP-5792 `wallet_sendCalls`** batches at the wallet layer. Already available in the installed
-stack — wagmi 2.19.5 exports `useSendCalls`, `useCapabilities`, `useCallsStatus`,
-`useWaitForCallsStatus`. Gate it on `useCapabilities()` and fall back to sequential sends, because
-support is wallet-dependent (MetaMask yes; Phantom almost certainly not).
+Items 1–5 of the previous list are **done** — see [Closed](#closed) at the bottom for what
+happened to each, including the one that turned out to be unrecoverable rather than fixed.
 
 ---
 
-## 2 · Withdraw is not yet "at any time"
+## 1 · No round has ever completed on this deployment
 
-The spec requires exiting with full principal whenever you like. Today `withdraw` pays from the
-pool's cUSDC buffer, and if that is short it pays **0** and the depositor waits for a keeper
-`refillBuffer`.
+The pool was redeployed for the allocation slider, so round #0 is the first round it has ever run
+and it is still `Open`. The full lifecycle — `closeEntries` → `finalizeEntries` → `draw` → `claim`
+→ `requestSweep` → `finalizeSweep` — has been exercised end to end **in tests** (62 of them) and
+piecemeal on the previous deployment, but not yet start-to-finish on this one.
 
-It cannot simply be inlined: the withdrawal amount is encrypted, so the contract cannot size the
-refill it would need.
+**Cost:** four keeper transactions plus two KMS round-trips, and about three days of waiting unless
+the draw time is brought forward. Worth doing before anyone judges it, because a `Settled` round in
+the history table is the difference between "it works" and "it says it works".
 
-**Proposed:** a public buffer target plus a **permissionless** `topUpBuffer()` that pulls from the
-yield source until the buffer reaches it. A short buffer then becomes repairable by anyone in the
-same block, rather than only by the keeper.
+## 2 · The `MEGA` track has never been drawn
+
+`setMegapotAllocation` is proven on-chain — 25% on the live pool mints a `MEGA` range as expected —
+but the second track has never had entries closed or a draw run, so `megapotShareBps()` still
+returns 0. That is *correct*: the split needs both tracks' ticket totals revealed, and only one has
+been. It does mean the Megapot half of the product is untested outside the local suite.
+
+**Cost:** the same four keeper calls again, against track 1, plus a prize in the `MEGA` reserve to
+draw for.
+
+## 3 · The yield loop is wired but has never actually earned
+
+`MockYieldVault` and `ERC4626YieldSource` are deployed and `setYieldSource` is set, so `invest()`,
+`harvest()` and `topUpBuffer()` all work rather than reverting `YieldSourceNotSet`. Nothing has
+been invested yet, though, so no yield has ever been realised on this deployment.
+
+`bufferTarget` is set to 25 USDC in anticipation, which is currently a forward-looking number:
+`deployedPrincipal` is zero, so every deposit is fully liquid and withdrawals cannot fail for
+liquidity today. The buffer only starts mattering once `invest()` runs.
+
+**Cost:** `requestDeploy` → KMS decrypt → `finalizeUnwrap` → `invest`, then mint USDC into the
+vault to simulate a yield accrual, then `harvest`. Needs more testnet USDC than the deployer
+currently holds (1 USDC).
+
+## 4 · Bridging is disabled on this testnet pair, by necessity
+
+Base Sepolia's Megapot settles in `TestTokenUSDC`, which CCTP cannot carry. The agent is deployed
+with `tokenMessenger = address(0)` and says so. **This is not a bug and is not fixable on testnet**
+— on mainnet Megapot settles in real USDC and the loop closes. It is listed here so nobody
+mistakes a deliberate hole for an oversight.
+
+## 5 · Megapot's real ticket cost is misstated in the app
+
+`ticketPrice()` returns `1000000`, but the fee is taken *before* tickets are credited, so a ticket
+actually costs `price / (1 - feeBps/10_000)` — **1.176 MPUSDC** on testnet at 15%, and ~1.43 USDC
+on Base mainnet at 30%. The Megapot panel and `ARCHITECTURE.md` §8 both quote the raw price.
+
+**Cost:** one formula, two places.
+
+## 6 · `FLOW.md` cites line numbers that have moved
+
+It references `MegaPot.sol:379`, `:504`, `:473` and others. The contract has been rewritten twice
+since — two tracks, then the allocation slider — so those anchors are wrong. The prose is still
+accurate; only the coordinates are stale.
+
+**Cost:** re-anchor to function names rather than line numbers, so it cannot rot again.
+
+## 7 · No keyed RPC
+
+`NEXT_PUBLIC_RPC_URL` is unset, so the app falls back to public endpoints. It now uses a viem
+`fallback` across several per chain and shows an explicit banner when none of them answer, which
+makes throttling survivable rather than fatal — but a keyed Alchemy or Infura endpoint is still the
+right answer under real load.
+
+**Cost:** one environment variable in the Vercel project, then a redeploy (it is a
+`NEXT_PUBLIC_` var, so it is inlined at build time and a save alone will not do it).
+
+## 8 · The repository is private
+
+The bounty requires *"open source in a public GitHub repository."* It is currently private by the
+owner's choice.
+
+**Cost:** `gh repo edit --visibility public`. The history has been scanned for key material — the
+only matches are the well-known public hardhat test mnemonic and an empty placeholder.
 
 ---
 
-## 3 · No yield source is wired
+## Closed
 
-`yieldSource == address(0)` on the live pool, so nothing accrues and prizes are funded explicitly
-through `fundPrize` / `fundTicketBudget`. The spec asks for prizes to be *the pool's accrued
-yield*.
+**Wrap and authorise are one transaction.** `ConfidentialUSDC.wrapAndAuthorize` collapses
+`wrap` + `setOperator`, and `wrapWithPermit` folds the ERC-20 approval in too where the token
+supports EIP-2612. Proven on the live deployment.
 
-The obstacle is real and worth restating: **Sepolia has no healthy ERC-4626 venue over Circle's
-USDC.**
+**Withdraw is "at any time" for real.** `topUpBuffer()` is permissionless, so a short buffer is
+repairable by anyone rather than only by a keeper.
 
-- **Aave Sepolia** advertises **77.88% APY** — but on a market with **22 USDC of free liquidity**
-  and **108.6% utilisation**. It cannot return principal, which breaks the no-loss guarantee far
-  worse than a stale buffer does. It also uses its *own* test USDC (`0x94a9…E4C8`), not Circle's,
-  so adopting it kills the CCTP/Megapot leg.
-- A small (~100 USDC) Aave position would show real accrual at bounded risk — demo-grade, not
-  production-shaped.
+**A yield source is wired.** See item 3 for what remains.
 
-**Recommendation:** keep prizes explicitly funded on testnet and wire `ERC4626YieldSource` on
-mainnet, where real venues exist. The harvest-only-surplus logic is already written and covered by
-the local suite, including the partial-fill accounting bug.
+**Round #0 stuck in `Claimable`** — obsolete. That round belonged to the previous deployment.
 
----
-
-## 4 · Round #0 is stuck in `Claimable`
-
-It was drawn, won and claimed; its claim deadline passed on 2026-08-04. Nobody called
-`requestSweep`, so it never advanced to `Settled`. Harmless, but it made the UI advertise a
-1 USDC prize that no longer existed (since fixed in the hero). Sweeping it would tidy the state.
-
----
-
-## 5 · The 60 USDC in the PrizeInbox is unflushed
-
-`0xA621d4Fc…f2E7` holds **60 USDC** that has not been folded into `prizeReserve`. One call:
-
-```shell
-npx hardhat megapot:flush-inbox --network sepolia
-```
-
-Then open a round so there is something to play for.
-
----
-
-## 6 · Docs overstate the testnet blocker
-
-`ARCHITECTURE.md` §10 and the README both say CCTP "cannot carry the token". That understates what
-actually works: CCTP moves USDC between Ethereum Sepolia and Base Sepolia perfectly well — burn
-limits are 10,000,000 per message in both directions, and `getLocalToken` maps the pair correctly.
-
-The single real blocker is that **Megapot's Sepolia jackpot settles in `MPUSDC`**, a free-mint test
-token, rather than the chain's real USDC. Outbound bridging works; the agent just cannot spend
-what arrives. Reword both.
-
----
-
-## 7 · Megapot economics are misstated in two places
-
-`ticketPrice()` returns `1000000`, but the 15% fee is taken **before** tickets are credited, so the
-real cost is **1.176 MPUSDC per ticket** on testnet (`25 spent → 21.25 tickets`, verified against
-our own agent's position) and **~1.43 USDC** on Base mainnet at 30%.
-
-Fix the app's Megapot panel and `ARCHITECTURE.md` §8, which both imply the nominal price.
+**The 60 USDC in the old `PrizeInbox` is unrecoverable, not merely unflushed.** `PrizeInbox.pot` is
+`immutable` and points at the pre-track pool, whose `MEGA()` does not exist — so `flush()` reverts
+rather than forwarding. Testnet funds, and the cost of an immutable that is otherwise doing exactly
+its job: it is *because* the destination cannot be changed that winnings can only ever become the
+prize depositors are playing for.

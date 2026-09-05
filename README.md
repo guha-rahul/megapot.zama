@@ -250,10 +250,20 @@ Verified at 390 / 768 / 1280px: no horizontal overflow, no console errors, and
 
 ## The testnet seam
 
-**On testnet the two halves do not connect.** Base Sepolia's Megapot settles in `TestTokenUSDC`,
-which CCTP cannot carry in either direction. The agent is deployed with bridging disabled and says
-so explicitly (`bridgeEnabled()` is false; `bridgeHome` reverts `BridgingDisabled`). On mainnet,
-Megapot v1 settles in real USDC and the loop closes.
+**On testnet the two halves do not connect, and no amount of code fixes it.**
+
+It is worth being precise about *why*, because the obvious explanation is wrong. CCTP works fine on
+this pair: the Sepolia and Base Sepolia `TokenMessengerV2` contracts both carry Circle's USDC, with
+a 10,000,000-unit burn limit in each direction, and `getLocalToken` maps correctly. We verified it
+against the live contracts (`test/live/Cctp.fork.ts`).
+
+The blocker is one step further along. **Base Sepolia's Megapot settles in `TestTokenUSDC`, not
+USDC** — so there is no USDC on the Base side for CCTP to carry home. The bridge is not the
+limitation; what the jackpot pays out in is. On mainnet Megapot v1 settles in real USDC and the
+loop closes with no change to any contract here.
+
+The agent is therefore deployed with bridging disabled and says so explicitly — `bridgeEnabled()`
+is false and `bridgeHome` reverts `BridgingDisabled` rather than failing obscurely inside CCTP.
 
 Each leg is still verified against real contracts — live Megapot, live CCTP, live Zama.
 

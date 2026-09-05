@@ -229,15 +229,25 @@ partial fill would strand principal that the next harvest would mistake for yiel
 
 ---
 
-## 8. Economics — read this before setting `megapotSpendBps`
+## 8. Economics — read this before allocating yield to Megapot
 
-Routing yield through Megapot is a deliberate trade, which is why it **defaults to zero**.
+Routing yield through Megapot is a deliberate trade, which is why every depositor sets their own
+allocation and the default is **zero**. There is no pool-wide multiplier: the choice belongs to
+whoever's yield it is.
 
 | | Base Sepolia | Base mainnet |
 | --- | --- | --- |
 | `feeBps` (house edge) | 1,500 | 3,000 |
 | `referralFeeBps` | 1,000 | 1,000 |
 | Round duration | 300 s | 86,280 s |
+| Nominal `ticketPrice()` | 1.000 | 1.000 |
+| **Actual cost per ticket** | **1.176** | **~1.429** |
+
+That last row is the one that catches people. `ticketPrice()` returns exactly 1 unit, but the fee
+comes out of the payment *before* tickets are credited, so the tickets a given spend buys are
+`spend × (1 − feeBps/10_000)`. Inverting that, one ticket costs `1 / (1 − feeBps/10_000)` —
+**1.176 MPUSDC** on testnet at 15%, and **~1.43 USDC** on Base mainnet at 30%. Budget from the
+actual cost, not the quoted price, or a purchase will buy fewer tickets than planned.
 
 At mainnet's 3,000 bps, every unit of yield played on Megapot has an expected return of ~0.70. The
 pool is buying variance: steady small yield converted into a chance at a much larger prize. That is
@@ -289,9 +299,17 @@ ACL `0xf0Ffdc93b7E186bC2f8CB3dAA75D86d1930A433D` · Coprocessor
 
 ## 10. The testnet seam
 
-**On testnet the two halves do not connect, and no amount of code fixes it.** Base Sepolia's
-Megapot settles in `TestTokenUSDC`, which CCTP cannot carry — in either direction. On mainnet,
-Megapot v1 settles in real USDC and the loop closes.
+**On testnet the two halves do not connect, and no amount of code fixes it.**
+
+It is worth being precise about *why*, because the obvious explanation is wrong. CCTP works fine on
+this pair: the Sepolia and Base Sepolia `TokenMessengerV2` contracts both carry Circle's USDC, with
+a 10,000,000-unit burn limit in each direction, and `getLocalToken` maps correctly. We verified it
+against the live contracts (`test/live/Cctp.fork.ts`).
+
+The blocker is one step further along. **Base Sepolia's Megapot settles in `TestTokenUSDC`, not
+USDC** — so there is no USDC on the Base side for CCTP to carry home. The bridge is not the
+limitation; what the jackpot pays out in is. On mainnet Megapot v1 settles in real USDC and the
+loop closes with no change to any contract here.
 
 So the agent is deployed with `tokenMessenger = address(0)` on testnet. It says so explicitly:
 `bridgeEnabled()` returns false and `bridgeHome` reverts `BridgingDisabled` rather than failing

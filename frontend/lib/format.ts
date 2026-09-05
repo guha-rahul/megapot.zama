@@ -23,8 +23,16 @@ export function parseUsdc(input: string): bigint {
   return BigInt(whole || "0") * 10n ** BigInt(USDC_DECIMALS) + BigInt(padded || "0");
 }
 
+/**
+ * Your share of the ticket space.
+ *
+ * The denominator only exists once entries close and the cursor total is revealed, so before that
+ * your odds are not zero — they are undetermined. Saying so beats printing a dash, which reads as
+ * "we don't know" when the truth is "not yet decided".
+ */
 export function formatOdds(tickets: bigint | undefined, total: bigint | undefined): string {
-  if (tickets === undefined || !total) return "—";
+  if (tickets === undefined) return "—";
+  if (!total) return "set when entries close";
   const pct = (Number(tickets) / Number(total)) * 100;
   if (pct > 0 && pct < 0.01) return "<0.01%";
   return `${pct.toFixed(2)}%`;

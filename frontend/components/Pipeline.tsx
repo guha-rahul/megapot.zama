@@ -112,14 +112,15 @@ export function Pipeline({ pool, leg }: { pool: PublicState; leg: MegapotLeg }) 
           link={addresses.megaPot}
           note={
             <>
-              <code className="mono">harvest()</code> splits realised yield: a configured share
-              becomes the ticket budget, the rest funds the prize directly. Principal is never
+              <code className="mono">harvest()</code> splits realised yield by the depositors&apos;
+              own allocations — the ratio of the two tracks&apos; ticket totals is exactly their
+              stake-weighted average — and the rest funds the main prize. Principal is never
               touched.
             </>
           }
           figs={[
             { k: "ticket budget", v: `${formatUsdc(budget)} USDC` },
-            { k: "routed to Megapot", v: `${(pool.megapotSpendBps ?? 0) / 100}%` },
+            { k: "routed to Megapot", v: `${(Number(pool.megapotShareBps ?? 0) / 100).toFixed(1)}%` },
             { k: "prize reserve", v: `${formatUsdc(pool.prizeReserve)} USDC` },
           ]}
         />

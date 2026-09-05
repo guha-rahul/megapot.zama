@@ -79,7 +79,7 @@ export function usePublicState() {
     roundsLength,
     entryRound: data?.[4]?.result as bigint | undefined,
     depositsPaused: data?.[5]?.result as boolean | undefined,
-    megapotSpendBps: data?.[6]?.result as number | undefined,
+    megapotShareBps: data?.[6]?.result as number | undefined,
     ticketBudget: data?.[7]?.result as bigint | undefined,
     latestRoundId,
     round: round as RoundView | undefined,

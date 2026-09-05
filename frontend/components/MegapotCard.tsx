@@ -14,7 +14,10 @@ export function MegapotCard({ leg, pool }: { leg: MegapotLeg; pool: PublicState 
   const now = useNow();
   if (!hasMegapotLeg()) return null;
 
-  const enabled = (pool.megapotSpendBps ?? 0) > 0;
+  // What harvest would actually route right now, computed by the contract rather than guessed
+  // here — so the card cannot disagree with the pool about its own state.
+  const shareBps = Number(pool.megapotShareBps ?? 0);
+  const enabled = shareBps > 0;
   const roundEnds = leg.roundEndsAt !== undefined ? Number(leg.roundEndsAt) : undefined;
 
   return (
@@ -22,7 +25,7 @@ export function MegapotCard({ leg, pool }: { leg: MegapotLeg; pool: PublicState 
       <div className="card-head">
         <h2>Megapot leg — Base Sepolia</h2>
         <span className={`chip ${enabled ? "chip-gold" : ""}`}>
-          {enabled ? `${(pool.megapotSpendBps ?? 0) / 100}% of yield` : "Route idle"}
+          {enabled ? `${(shareBps / 100).toFixed(1)}% of yield` : "Nothing allocated yet"}
         </span>
       </div>
       <p className="card-hint">
@@ -74,8 +77,10 @@ export function MegapotCard({ leg, pool }: { leg: MegapotLeg; pool: PublicState 
           </span>
         ) : (
           <span>
-            <code className="mono">megapotSpendBps</code> is 0, so yield currently funds the prize
-            directly and nothing is played on Megapot. Governance opts in deliberately.
+            No depositor has allocated any yield to Megapot yet, so all of it funds the main prize.
+            This is not a switch anyone flips centrally — the share is whatever the pool&apos;s
+            depositors chose, weighted by stake, and it reads zero until someone opts in and both
+            tracks have had their ticket totals revealed.
           </span>
         )}
       </div>
