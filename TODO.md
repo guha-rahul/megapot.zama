@@ -68,8 +68,13 @@ that survivable rather than fatal: a viem `fallback` across four endpoints per c
 20s (slower than Sepolia's ~12s block time, since polling faster cannot see anything new and only
 spends rate limit) with background tabs excluded, and an explicit banner when no endpoint answers.
 
-A keyed Alchemy or Infura endpoint is still the right answer under real load, and it is the one
-thing here that needs a human with an account.
+A viewer can also paste their own endpoint into the app when the banner appears; it is kept in
+their browser, tried first, and sent nowhere. That matters because `NEXT_PUBLIC_RPC_URL` is inlined
+at build time — without a runtime path, the only person who can fix a throttled endpoint is
+whoever can redeploy, which is never the person actually being throttled.
+
+Setting `NEXT_PUBLIC_RPC_URL` for everyone is still the right answer under real load, and it is
+the one thing here that needs a human with a provider account.
 
 **Cost:** one environment variable in the Vercel project, then a redeploy (it is a
 `NEXT_PUBLIC_` var, so it is inlined at build time and a save alone will not do it).

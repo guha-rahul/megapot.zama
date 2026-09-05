@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { usePathname } from "next/navigation";
 
 import { ROUND_STATES } from "../lib/contracts";
+import { isUsable, setCustomRpc } from "../lib/rpc";
 import { formatUsdc } from "../lib/format";
 import { humanDuration } from "../lib/timing";
 import { STEPS, type Journey } from "../lib/useJourney";
@@ -48,16 +50,41 @@ export function Shell({
  * the user decide whether the app is broken or the pool is simply empty.
  */
 function Unreachable({ detail }: { detail: string }) {
+  const [url, setUrl] = useState("");
+  const bad = url.length > 0 && !isUsable(url);
+
   return (
     <div className="status status-error">
-      <span>
+      <span style={{ width: "100%" }}>
         <strong style={{ color: "var(--text)" }}>Cannot reach Sepolia right now.</strong> Public RPC
         endpoints rate-limit, and this app polls. Everything below is stale or blank for that
-        reason, not because the pool is empty — your funds are unaffected either way. It retries on
-        its own; a page refresh usually picks a healthier node.
-        <span className="mono" style={{ display: "block", marginTop: 6, opacity: 0.7 }}>
+        reason, not because the pool is empty — your funds are unaffected either way. It already
+        retries across several endpoints on its own.
+        <span className="mono" style={{ display: "block", margin: "6px 0", opacity: 0.7 }}>
           {detail.split("\n")[0].slice(0, 160)}
         </span>
+        If it keeps happening, point the app at your own endpoint. It stays in this browser and is
+        sent nowhere — a keyed URL is a credential, and it is treated as one.
+        <span className="btn-row" style={{ marginTop: 8 }}>
+          <input
+            type="text"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://eth-sepolia.g.alchemy.com/v2/…"
+            aria-label="Custom Sepolia RPC endpoint"
+            style={{ flex: 1, minWidth: 0 }}
+          />
+          <button
+            disabled={!url || bad}
+            onClick={() => {
+              setCustomRpc(url);
+              window.location.reload();
+            }}
+          >
+            Use it
+          </button>
+        </span>
+        {bad && <span style={{ display: "block", marginTop: 6 }}>That needs to be an https URL.</span>}
       </span>
     </div>
   );

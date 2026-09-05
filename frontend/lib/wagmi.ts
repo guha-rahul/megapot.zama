@@ -3,6 +3,8 @@
 import { createConfig, fallback, http } from "wagmi";
 import { baseSepolia, sepolia } from "wagmi/chains";
 
+import { customBaseRpc, customRpc } from "./rpc";
+
 /**
  * Both chains are registered: the confidential pool lives on Ethereum Sepolia (the Zama Protocol
  * is not deployed on Base), the Megapot leg on Base Sepolia. Reads for the Base side pass
@@ -17,12 +19,14 @@ import { baseSepolia, sepolia } from "wagmi/chains";
  * viem's fallback ranks by latency and moves on when a node starts failing, so one throttled
  * provider costs a retry instead of the session.
  *
- * Set `NEXT_PUBLIC_RPC_URL` to a keyed endpoint (Alchemy, Infura) and it is tried first. That is
- * still the right answer under real load; this is what makes the app survive without one.
+ * A keyed endpoint is tried first when there is one. It can come from `NEXT_PUBLIC_RPC_URL` at
+ * build time, or from the viewer's own browser at runtime (`lib/rpc.ts`) — the latter matters
+ * because the person being rate-limited is usually not the person who can redeploy.
  */
 
 /** Public endpoints, in preference order. A keyed URL from the environment goes in front. */
 const sepoliaRpcs = [
+  customRpc(),
   process.env.NEXT_PUBLIC_RPC_URL,
   "https://ethereum-sepolia-rpc.publicnode.com",
   "https://rpc.sepolia.org",
@@ -30,6 +34,7 @@ const sepoliaRpcs = [
 ].filter(Boolean) as string[];
 
 const baseSepoliaRpcs = [
+  customBaseRpc(),
   process.env.NEXT_PUBLIC_BASE_RPC_URL,
   "https://base-sepolia-rpc.publicnode.com",
   "https://sepolia.base.org",

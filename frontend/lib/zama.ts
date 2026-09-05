@@ -11,7 +11,14 @@ import type { Address, WalletClient } from "viem";
 const ZERO_HANDLE = "0x0000000000000000000000000000000000000000000000000000000000000000";
 
 /** The SDK reads chain state directly; keep that pinned to Sepolia regardless of wallet state. */
-const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com";
+import { customRpc } from "./rpc";
+
+// The SDK reads chain config directly, so it needs the same endpoint the app is using — including
+// a viewer-supplied one, or its eip712Domain() call fails while the rest of the app works.
+const RPC_URL =
+  (typeof window !== "undefined" ? customRpc() : undefined) ??
+  process.env.NEXT_PUBLIC_RPC_URL ??
+  "https://ethereum-sepolia-rpc.publicnode.com";
 
 export const isZeroHandle = (handle: string) => !handle || handle === ZERO_HANDLE;
 
