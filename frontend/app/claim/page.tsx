@@ -32,19 +32,14 @@ export default function ClaimPage() {
   const round = pool.round;
 
   /**
-   * The award is never a handle of its own — it lands inside the encrypted balance. So the only
-   * way to learn the outcome is to decrypt either side of the claim and diff. Both snapshots must
-   * come from `reveal()`'s return value; the hook's `me.balance` is frozen at the render that built
-   * this handler. The pre-claim decrypt reuses the existing session, so it costs no extra signature.
+   * The claim writes an award handle for *every* claimer, readable only by them, and a loser's
+   * decrypts to zero. So the outcome is one direct decryption — no diffing balances either side,
+   * and no wallet round-trip before the transaction.
+   *
+   * That the question is safe to ask is the point: holding an award handle, or being seen to
+   * decrypt one, says nothing about whether you won.
    */
   const claim = async () => {
-    setState({ text: "Decrypting your balance before the claim…", busy: true });
-    const before = await me.reveal();
-    if (!before) {
-      setState({ text: me.error ?? "Could not decrypt your balance.", kind: "error" });
-      return;
-    }
-
     await run(
       `Claiming round #${pool.latestRoundId}`,
       async () => {
@@ -60,17 +55,23 @@ export default function ClaimPage() {
         });
       },
       async () => {
-        setState({ text: "Decrypting your balance to see the result…", busy: true });
-        const after = await me.reveal();
+        setState({ text: "Decrypting your award…", busy: true });
+        const award = await me.revealAward(MAIN, pool.latestRoundId!);
         pool.refetch();
-        if (after && after.balance > before.balance) {
-          const won = after.balance - before.balance;
-          setOutcome({ won: true, amount: won });
-          setState({ text: `🎉 You won ${formatUsdc(won)} USDC — visible only to you.`, kind: "win" });
+        me.refetchHandles();
+
+        if (award === undefined) {
+          setState({ text: me.error ?? "Claimed, but the award could not be decrypted.", kind: "error" });
+          return;
+        }
+        if (award > 0n) {
+          setOutcome({ won: true, amount: award });
+          setState({ text: `🎉 You won ${formatUsdc(award)} USDC — visible only to you.`, kind: "win" });
         } else {
           setOutcome({ won: false, amount: 0n });
           setState({ text: "Claimed — no win this round. Only you can see that." });
         }
+        if (me.revealed) await me.reveal();
       },
     );
   };
@@ -149,8 +150,8 @@ export default function ClaimPage() {
             </div>
             <p className="card-hint" style={{ margin: "6px 0 0" }}>
               {outcome.won
-                ? `Your balance rose by ${formatUsdc(outcome.amount)} USDC. On-chain this is indistinguishable from a losing claim — an observer sees the same call and the same events.`
-                : "Your balance is unchanged. Your principal is untouched — that is the whole point of a no-loss lottery."}
+                ? `${formatUsdc(outcome.amount)} USDC, decrypted from an award handle the contract granted to your address alone. On-chain this is indistinguishable from a losing claim — same call, same gas, same events.`
+                : "Your award handle decrypted to zero. You still hold one, exactly as a winner does — which is why holding one proves nothing. Your principal is untouched."}
             </p>
           </div>
         )}

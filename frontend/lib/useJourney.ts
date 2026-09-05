@@ -12,6 +12,7 @@ export const STEPS = [
   { key: "deposit", label: "Deposit", href: "/deposit" },
   { key: "position", label: "Position", href: "/position" },
   { key: "claim", label: "Claim", href: "/claim" },
+  { key: "withdraw", label: "Withdraw", href: "/withdraw" },
 ] as const;
 
 export type StepKey = (typeof STEPS)[number]["key"];
@@ -55,6 +56,9 @@ export function useJourney(me: PrivateState, pool: PublicState) {
     deposit: hasDeposited,
     position: hasDeposited,
     claim: hasClaimed === true,
+    // Deliberately never "done". Withdrawing is not a milestone you pass but a door that stays
+    // open — marking it complete would imply the opposite of what the pool guarantees.
+    withdraw: false,
   };
 
   return {

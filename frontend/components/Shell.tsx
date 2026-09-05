@@ -112,8 +112,8 @@ function Footer() {
         public testnets; do not use with real funds.
       </div>
       <div className="addr-list">
-        <Link href="/rounds">Round history</Link>
-        <Link href="/bridge">Cross-chain</Link>
+        <Link href="/setup">Setup</Link>
+        <Link href="/bridge">Megapot</Link>
         <Link href="/privacy">What&apos;s encrypted</Link>
         <Link href="/keeper">Keeper console</Link>
       </div>

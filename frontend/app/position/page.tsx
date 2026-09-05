@@ -119,30 +119,13 @@ export default function PositionPage() {
           </div>
         )}
 
-        <div className="card">
-          <div className="card-head">
-            <h2>Withdraw</h2>
-            <EtaBadge eta={ETA.tx} />
-          </div>
-          <p className="card-hint">
-            Paid from the pool&apos;s confidential buffer, so the payout is encrypted too. Withdrawing
-            shrinks your tickets by exactly what you take — claim any open round first.
-          </p>
-          <AmountField
-            value={amount}
-            onChange={setAmount}
-            unit="cUSDC"
-            max={me.revealed ? me.balance : undefined}
-            maxLabel={me.revealed ? "In the pool" : "In the pool (decrypt to see)"}
-            format={(v) => formatUsdc(v)}
-          />
-          <button className="block" disabled={busy} onClick={() => send("Encrypting and withdrawing", "withdraw")}>
-            Withdraw — full principal, any time
-          </button>
-          <div className="status">
-            If the buffer is short this pays 0 and leaves your balance untouched. Check{" "}
-            <code className="mono">lastWithdrawnOf</code> after — only you can read it.
-          </div>
+        <div className="status">
+          <span>
+            Your principal is never staked, so there is nothing to wait for.{" "}
+            <Link href="/withdraw" style={{ color: "var(--gold)", fontWeight: 700 }}>
+              Withdraw any amount, any time →
+            </Link>
+          </span>
         </div>
 
         <div className="card">

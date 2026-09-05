@@ -38,6 +38,7 @@ export function AmountField({
   max,
   maxLabel = "Available",
   format,
+  error,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -45,10 +46,12 @@ export function AmountField({
   max?: bigint;
   maxLabel?: string;
   format: (v: bigint | undefined) => string;
+  /** Why this amount cannot be submitted — see `checkAmount`. */
+  error?: string | null;
 }) {
   return (
     <>
-      <div className="field">
+      <div className="field" data-invalid={Boolean(error)}>
         <input
           type="text"
           inputMode="decimal"
@@ -69,6 +72,7 @@ export function AmountField({
           </button>
         )}
       </div>
+      {error && <div className="field-error">{error}</div>}
     </>
   );
 }

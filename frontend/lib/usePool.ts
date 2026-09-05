@@ -275,6 +275,65 @@ export function usePrivateState() {
     refetchWallet,
   ]);
 
+  /**
+   * Decrypt one `euint64` the pool has granted to this address, reusing the reveal session.
+   *
+   * The handle is read imperatively rather than through a cached `useReadContract` for the same
+   * reason `reveal` re-reads its own: right after the transaction that produced it, the cached
+   * value is still the pre-transaction one, so a decrypt would faithfully return a stale zero.
+   *
+   * Sharing `sessionRef` with `reveal` is what keeps this to one EIP-712 signature per visit
+   * rather than one per question asked.
+   */
+  const revealHandle = useCallback(
+    async (fn: "awardOf" | "lastWithdrawnOf", args: readonly unknown[]): Promise<bigint | undefined> => {
+      if (!address || !walletClient) return undefined;
+      setBusy(true);
+      setError(null);
+      try {
+        const { getPublicClient } = await import("./clients");
+        const handle = (await getPublicClient().readContract({
+          address: addresses.megaPot,
+          abi: megaPotAbi,
+          functionName: fn,
+          args: args as never,
+        })) as string;
+
+        const active =
+          sessionRef.current ??
+          (await createDecryptSession(walletClient, address, [addresses.megaPot, addresses.confidentialUSDC]));
+        sessionRef.current = active;
+        setSession(active);
+
+        const clear = await userDecrypt(active, [{ handle, contractAddress: addresses.megaPot }]);
+        return clear[handle] ?? clear[handle.toLowerCase()] ?? 0n;
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        return undefined;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [address, walletClient],
+  );
+
+  /**
+   * What you won in a round — from its own handle, not a balance diff.
+   *
+   * Every claimer gets one of these, and a loser's decrypts to zero. So asking the question
+   * reveals nothing about the answer: holding an award handle is not evidence of having won.
+   */
+  const revealAward = useCallback(
+    (track: number, roundId: bigint) => revealHandle("awardOf", [track, roundId, address]),
+    [revealHandle, address],
+  );
+
+  /** What your last withdrawal actually paid out — the buffer may have been short. */
+  const revealLastWithdrawn = useCallback(
+    () => revealHandle("lastWithdrawnOf", [address]),
+    [revealHandle, address],
+  );
+
   const hide = useCallback(() => {
     sessionRef.current = null;
     setSession(null);
@@ -297,6 +356,8 @@ export function usePrivateState() {
       balance,
       tickets,
       walletBalance,
+      revealAward,
+      revealLastWithdrawn,
       usdcBalance: usdcBalance as bigint | undefined,
       balanceHandle: balanceHandle as string | undefined,
       isOperator: isOperator as boolean | undefined,
@@ -315,6 +376,8 @@ export function usePrivateState() {
       balance,
       tickets,
       walletBalance,
+      revealAward,
+      revealLastWithdrawn,
       usdcBalance,
       balanceHandle,
       isOperator,

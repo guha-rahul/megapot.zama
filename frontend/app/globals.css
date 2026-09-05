@@ -1670,3 +1670,14 @@ button.block {
     font-size: 12.5px;
   }
 }
+
+.field[data-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.field-error {
+  margin-top: 7px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--danger);
+}

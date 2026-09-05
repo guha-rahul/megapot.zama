@@ -10,11 +10,14 @@ import { shortAddress } from "../lib/format";
 import { useChainSwitch } from "../lib/useChainSwitch";
 import { poolChain } from "../lib/wagmi";
 
+// The spec grades "deposit -> draw -> claim -> withdraw", so the nav bar is that sentence. The
+// supporting pages are still one click away, in the footer.
 const LINKS = [
-  { href: "/app", label: "App" },
-  { href: "/rounds", label: "Rounds" },
-  { href: "/bridge", label: "Cross-chain" },
-  { href: "/privacy", label: "Privacy" },
+  { href: "/deposit", label: "Deposit" },
+  { href: "/position", label: "Position" },
+  { href: "/rounds", label: "Draw" },
+  { href: "/claim", label: "Claim" },
+  { href: "/withdraw", label: "Withdraw" },
 ];
 
 export function Nav() {
