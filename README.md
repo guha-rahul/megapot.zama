@@ -17,6 +17,12 @@ Protocol so the entire per-user ledger is confidential.
 📐 **[ARCHITECTURE.md](./ARCHITECTURE.md)** — the full design: why it spans two chains, the
 encrypted ticket space, the trust model, and every verified address.
 
+🔐 **[FLOW.md](./FLOW.md)** — the end-to-end flow across both chains, and every privacy boundary
+in it: what is encrypted, what gets decrypted and *where*, what is revealed, and what never is.
+
+📋 **[TODO.md](./TODO.md)** — open work, each item with its real cost: the one-transaction
+onboarding redeploy, the withdraw-liquidity gap, and why no yield source is wired on testnet.
+
 ---
 
 ## Live on testnet
@@ -197,14 +203,32 @@ npx hardhat --config hardhat.megapot.config.ts megapot-base:status --network bas
 
 ---
 
-## Frontend
+## App
 
-A Next.js dapp lives in [`frontend/`](./frontend). Amounts are encrypted in the browser with the
-Zama relayer SDK; your balance and odds decrypt locally after one signature.
+A Next.js dapp lives in [`frontend/`](./frontend), wired to the live deployment on **both**
+testnets — the confidential pool on Ethereum Sepolia and the real Megapot position on Base
+Sepolia, side by side, without asking anyone to switch networks.
 
 ```shell
 cd frontend && cp .env.local.example .env.local && npm install && npm run dev
 ```
+
+Amounts are encrypted in the browser with the Zama relayer SDK before they are submitted; your
+balance and odds decrypt locally after one signature. Encrypted values render as ciphertext until
+you unlock them, which is the whole point made visible:
+
+| Panel | Live data |
+| --- | --- |
+| Prize hero | round #0, prize, tickets in play, state — read from Sepolia |
+| Deposit & play | guided wrap → authorise → deposit, then withdraw / claim |
+| Your position | balance, tickets, win chance — ciphertext until you decrypt |
+| Megapot leg | the pool's real 5.67% share of the live Base Sepolia jackpot, and its 15% edge |
+
+Claiming is the same transaction whether you won or lost — same call, same gas, same events — so
+the only way to learn the outcome is to decrypt your own balance.
+
+Verified at 390 / 768 / 1280px: no horizontal overflow, no console errors, and
+`crossOriginIsolated === true` (the Zama WASM needs it).
 
 ---
 

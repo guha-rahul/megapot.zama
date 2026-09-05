@@ -152,3 +152,63 @@ task("megapot-base:faucet", "Mint Megapot's test token to the agent (Base Sepoli
     await (await token.mint(d.agent, hre.ethers.parseUnits(args.amount, 6))).wait();
     console.log(`minted ${args.amount} TestTokenUSDC to the agent`);
   });
+
+// --------------------------------------------------------------------------- //
+//                      Complete a CCTP transfer on Base                        //
+// --------------------------------------------------------------------------- //
+
+/**
+ * Finish an Ethereum → Base CCTP transfer.
+ *
+ * The burn already happened on the source chain; Circle attests it once the burn reaches hard
+ * finality (~15 minutes from Ethereum). This polls for that attestation and then submits it.
+ *
+ * `receiveMessage` is permissionless — the burn fixed `mintRecipient`, so whoever pays the gas
+ * cannot redirect a single unit. Anyone can rescue a stalled transfer.
+ */
+task("megapot-base:receive", "Complete a CCTP transfer whose burn happened on Ethereum")
+  .addParam("tx", "The source-chain transaction hash of the burn")
+  .addOptionalParam("wait", "Seconds to keep polling for the attestation", "0")
+  .setAction(async (args, hre) => {
+    const { ethers } = hre;
+    const IRIS = "https://iris-api-sandbox.circle.com/v2/messages/0";
+    const MESSAGE_TRANSMITTER = "0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275";
+
+    const deadline = Date.now() + Number(args.wait) * 1000;
+    let msg: { message: string; attestation: string } | undefined;
+
+    for (;;) {
+      const res: any = await fetch(`${IRIS}?transactionHash=${args.tx}`).then((r) => r.json());
+      const m = res?.messages?.[0];
+      if (m?.status === "complete" && m.attestation && m.attestation !== "PENDING") {
+        msg = { message: m.message, attestation: m.attestation };
+        break;
+      }
+      const state = m?.status ?? res?.error ?? "unknown";
+      if (Date.now() >= deadline) {
+        console.log(`attestation not ready yet (status: ${state}).`);
+        console.log("Circle needs hard finality on Ethereum — roughly 15 minutes. Re-run this task later.");
+        return;
+      }
+      console.log(`  attestation ${state} — waiting…`);
+      await new Promise((r) => setTimeout(r, 20_000));
+    }
+
+    const [signer] = await ethers.getSigners();
+    const bal = await ethers.provider.getBalance(signer.address);
+    if (bal === 0n) {
+      console.log(`${signer.address} has no ETH on ${hre.network.name}. Fund it and re-run.`);
+      return;
+    }
+
+    const mt = new ethers.Contract(
+      MESSAGE_TRANSMITTER,
+      ["function receiveMessage(bytes message, bytes attestation) returns (bool)"],
+      signer,
+    );
+    console.log("submitting receiveMessage…");
+    const tx = await mt.receiveMessage(msg!.message, msg!.attestation);
+    const rc = await tx.wait();
+    console.log(`✅ minted on ${hre.network.name} — tx ${rc?.hash}`);
+    console.log("   The agent now holds the bridged USDC. Verify with megapot-base:status.");
+  });

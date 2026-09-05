@@ -7,6 +7,9 @@ way, what each piece does, and exactly where the privacy and trust boundaries fa
 
 ---
 
+> For a step-by-step walk of the flow with every encryption boundary marked — what is
+> decrypted, where, and what is revealed at each stage — see **[FLOW.md](./FLOW.md)**.
+
 ## 1. The constraint that forces the shape
 
 The design is not two chains by preference. It is two chains because the two things it needs
