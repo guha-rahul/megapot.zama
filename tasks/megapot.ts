@@ -38,6 +38,7 @@ async function cToken(hre: HardhatRuntimeEnvironment) {
 task("megapot:deploy", "Deploy the confidential pool against live infrastructure")
   .addOptionalParam("usdc", "Underlying ERC-20 (defaults to the chain's canonical USDC)")
   .addOptionalParam("vault", "An ERC-4626 vault over that USDC to earn yield in (optional)")
+  .addFlag("mockVault", "Deploy a MockYieldVault over the USDC and use that as the venue")
   .addOptionalParam("keeper", "Keeper address (defaults to the deployer)")
   .addOptionalParam("agent", "MegapotTicketAgent address on Base, if already deployed")
   .setAction(async (args, hre) => {
@@ -77,11 +78,24 @@ task("megapot:deploy", "Deploy the confidential pool against live infrastructure
     const inboxAddr = await inbox.getAddress();
     console.log(`PrizeInbox          ${inboxAddr}   <- point the Base agent here`);
 
+    // Testnet has no healthy ERC-4626 venue over Circle's USDC — Aave's Sepolia market runs at
+    // over 100% utilisation on a couple of dozen dollars of liquidity, and uses its own test
+    // token. So the mock vault is the honest way to make the *whole* yield path executable here:
+    // deploy, harvest and top-up all run for real, and pointing at a live venue on mainnet is a
+    // one-argument change with no contract edit.
+    let vaultAddr: string | undefined = args.vault;
+    if (!vaultAddr && args.mockVault) {
+      const vault = await (await ethers.getContractFactory("MockYieldVault")).deploy(usdcAddr);
+      await vault.waitForDeployment();
+      vaultAddr = await vault.getAddress();
+      console.log(`MockYieldVault      ${vaultAddr}`);
+    }
+
     let yieldSource: string | undefined;
-    if (args.vault) {
+    if (vaultAddr) {
       const source = await (
         await ethers.getContractFactory("ERC4626YieldSource")
-      ).deploy(args.vault, potAddr, usdcAddr);
+      ).deploy(vaultAddr, potAddr, usdcAddr);
       await source.waitForDeployment();
       yieldSource = await source.getAddress();
       await (await megaPot.setYieldSource(yieldSource)).wait();
@@ -102,6 +116,7 @@ task("megapot:deploy", "Deploy the confidential pool against live infrastructure
       confidentialUSDC: await cUSDC.getAddress(),
       megaPot: potAddr,
       prizeInbox: inboxAddr,
+      yieldVault: vaultAddr ?? null,
       yieldSource: yieldSource ?? null,
       tokenMessenger: cctp.tokenMessenger,
       messageTransmitter: cctp.messageTransmitter,
