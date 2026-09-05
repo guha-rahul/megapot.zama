@@ -9,7 +9,7 @@ import { AmountField, TxStatus } from "../../components/TxStatus";
 import { addresses, megaPotAbi } from "../../lib/contracts";
 import { checkAmount, formatUsdc, parseUsdc, readableError } from "../../lib/format";
 import { ETA } from "../../lib/timing";
-import { useJourney } from "../../lib/useJourney";
+import { stepNumber, useJourney } from "../../lib/useJourney";
 import { usePrivateState, usePublicState } from "../../lib/usePool";
 import { useTx } from "../../lib/useTx";
 import { poolChain } from "../../lib/wagmi";
@@ -69,7 +69,7 @@ export default function WithdrawPage() {
   return (
     <Shell pool={pool} journey={journey}>
       <div className="page-head">
-        <div className="eyebrow">Step 4</div>
+        <div className="eyebrow">Step {stepNumber("withdraw")}</div>
         <h1>Withdraw — any time</h1>
         <p>
           Your principal is <strong style={{ color: "var(--text)" }}>never staked</strong>. Only the

@@ -11,7 +11,7 @@ import { AmountField, TxStatus } from "../../components/TxStatus";
 import { addresses, megaPotAbi } from "../../lib/contracts";
 import { formatUsdc, parseUsdc } from "../../lib/format";
 import { ETA } from "../../lib/timing";
-import { useJourney } from "../../lib/useJourney";
+import { stepNumber, useJourney } from "../../lib/useJourney";
 import { usePrivateState, usePublicState } from "../../lib/usePool";
 import { useTx } from "../../lib/useTx";
 import { poolChain } from "../../lib/wagmi";
@@ -54,7 +54,7 @@ export default function DepositPage() {
   return (
     <Shell pool={pool} journey={journey}>
       <div className="page-head">
-        <div className="eyebrow">Step 2</div>
+        <div className="eyebrow">Step {stepNumber("deposit")}</div>
         <h1>Deposit — encrypted</h1>
         <p>
           Your amount is encrypted in this browser before it is sent, and bound to your address and

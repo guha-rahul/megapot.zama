@@ -9,7 +9,7 @@ import { TxStatus } from "../../components/TxStatus";
 import { MAIN, addresses, megaPotAbi } from "../../lib/contracts";
 import { formatUsdc } from "../../lib/format";
 import { ETA } from "../../lib/timing";
-import { useJourney } from "../../lib/useJourney";
+import { stepNumber, useJourney } from "../../lib/useJourney";
 import { usePrivateState, usePublicState } from "../../lib/usePool";
 import { useTx } from "../../lib/useTx";
 import { poolChain } from "../../lib/wagmi";
@@ -79,7 +79,7 @@ export default function ClaimPage() {
   return (
     <Shell pool={pool} journey={journey}>
       <div className="page-head">
-        <div className="eyebrow">Step 3</div>
+        <div className="eyebrow">Step {stepNumber("claim")}</div>
         <h1>Claim your result</h1>
         <p>
           Winning and losing are the <strong style={{ color: "var(--text)" }}>same transaction</strong> —

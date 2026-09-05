@@ -146,9 +146,10 @@ export function Pipeline({ pool, leg }: { pool: PublicState; leg: MegapotLeg }) 
           caveat={
             !hasBridged ? (
               <>
-                <strong>Nothing has crossed yet.</strong> The route is wired, but{" "}
-                <code className="mono">harvest()</code> has never run — there is no yield source on
-                Sepolia — so no budget has ever been earmarked or burned.
+                <strong>Nothing has crossed yet.</strong> The route is wired and a yield venue is
+                deployed, so <code className="mono">harvest()</code> works — but no principal has
+                been invested on this deployment yet, so there is no realised yield to earmark and
+                nothing to burn. This fills in the moment the first harvest lands.
               </>
             ) : undefined
           }

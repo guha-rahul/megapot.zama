@@ -78,7 +78,11 @@ function PrizeBar({ pool }: { pool: PublicState }) {
       <div style={{ display: "flex", gap: 22, flexWrap: "wrap", alignItems: "center" }}>
         <div>
           <div className="stat-k">Tickets</div>
-          <div className="stat-v num">{formatUsdc(pool.settledTickets, 0)}</div>
+          {/* The total is the revealed cursor, which only exists once entries close. Printing 0
+              before that reads as "nobody has deposited", which is a different claim entirely. */}
+          <div className={pool.settledTickets ? "stat-v num" : "stat-v"}>
+            {pool.settledTickets ? formatUsdc(pool.settledTickets, 0) : "sealed"}
+          </div>
         </div>
         <div>
           <div className="stat-k">{round && round.state < 4 ? "Draws in" : "Round"}</div>

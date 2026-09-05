@@ -10,7 +10,7 @@ import { AmountField, TxStatus } from "../../components/TxStatus";
 import { addresses, confidentialUsdcAbi, erc20Abi } from "../../lib/contracts";
 import { formatUsdc, parseUsdc } from "../../lib/format";
 import { ETA } from "../../lib/timing";
-import { useJourney } from "../../lib/useJourney";
+import { stepNumber, useJourney } from "../../lib/useJourney";
 import { usePrivateState, usePublicState } from "../../lib/usePool";
 import { useTx } from "../../lib/useTx";
 import { poolChain } from "../../lib/wagmi";
@@ -89,7 +89,7 @@ export default function SetupPage() {
   return (
     <Shell pool={pool} journey={journey}>
       <div className="page-head">
-        <div className="eyebrow">Step 1</div>
+        <div className="eyebrow">Step {stepNumber("setup")}</div>
         <h1>Set up your confidential balance</h1>
         <p>
           Two one-time actions. After this, every deposit and withdrawal you make moves an amount

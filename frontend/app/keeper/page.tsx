@@ -250,8 +250,10 @@ export default function KeeperPage() {
           <EtaBadge eta={ETA.tx} />
         </div>
         <p className="card-hint">
-          With no yield source wired, the prize and the Megapot ticket budget are funded directly.
-          Both pull from your wallet — they never touch depositor principal.
+          Fund the prize or the Megapot ticket budget straight from your wallet, without waiting
+          for a harvest. Both are pull-based and neither ever touches depositor principal — which
+          is what keeps arriving prize money from being confused with deposits waiting to be
+          invested.
         </p>
         <div className="field">
           <input

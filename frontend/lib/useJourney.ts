@@ -18,6 +18,14 @@ export const STEPS = [
 export type StepKey = (typeof STEPS)[number]["key"];
 
 /**
+ * A step's position in the rail, 1-based.
+ *
+ * Page headings used to hard-code these, which is how "Step 4" ended up above a rail that showed
+ * Withdraw as step 6. Deriving it means adding a step renumbers the headings for free.
+ */
+export const stepNumber = (key: StepKey) => STEPS.findIndex((s) => s.key === key) + 1;
+
+/**
  * Where the user actually is, derived from chain state rather than remembered in the client.
  *
  * Splitting the flow across routes means someone can deep-link into the middle of it. Every page
