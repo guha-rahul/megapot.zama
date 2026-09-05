@@ -63,10 +63,13 @@ oversight, or spends a day debugging the bridge.
 
 ## 5 · No keyed RPC
 
-`NEXT_PUBLIC_RPC_URL` is unset, so the app falls back to public endpoints. It now uses a viem
-`fallback` across several per chain and shows an explicit banner when none of them answer, which
-makes throttling survivable rather than fatal — but a keyed Alchemy or Infura endpoint is still the
-right answer under real load.
+`NEXT_PUBLIC_RPC_URL` is unset, so the app falls back to public endpoints. Three things now make
+that survivable rather than fatal: a viem `fallback` across four endpoints per chain, polling at
+20s (slower than Sepolia's ~12s block time, since polling faster cannot see anything new and only
+spends rate limit) with background tabs excluded, and an explicit banner when no endpoint answers.
+
+A keyed Alchemy or Infura endpoint is still the right answer under real load, and it is the one
+thing here that needs a human with an account.
 
 **Cost:** one environment variable in the Vercel project, then a redeploy (it is a
 `NEXT_PUBLIC_` var, so it is inlined at build time and a save alone will not do it).

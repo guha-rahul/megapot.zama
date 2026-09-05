@@ -7,7 +7,15 @@ import { useAccount, useReadContract, useReadContracts, useWalletClient } from "
 import { BASE_SEPOLIA_ID, MAIN, MEGA, addresses, confidentialUsdcAbi, erc20Abi, jackpotAbi, megaPotAbi, ticketAgentAbi } from "./contracts";
 import { createDecryptSession, encryptAmount, userDecrypt, type DecryptSession } from "./zama";
 
-const REFRESH = 12_000;
+/**
+ * How often public pool state is re-read.
+ *
+ * Sepolia blocks land every ~12s, so polling faster than this cannot see anything new — it only
+ * spends rate limit. On free RPC endpoints that limit is the scarce resource, and a tab left open
+ * is the biggest consumer of it, so this errs slower than the block time rather than faster.
+ * Anything the user themselves causes is refetched explicitly at the end of the transaction.
+ */
+const REFRESH = 20_000;
 
 /** What one `reveal()` decrypted, returned so callers can diff two of them. */
 export type Snapshot = { balance: bigint; walletBalance: bigint; tickets: bigint; megaTickets: bigint };
@@ -49,7 +57,7 @@ export function usePublicState() {
       { ...base, functionName: "megapotShareBps" },
       { ...base, functionName: "ticketBudget" },
     ],
-    query: { refetchInterval: REFRESH, enabled },
+    query: { refetchInterval: REFRESH, refetchIntervalInBackground: false, enabled },
   });
 
   const roundsLength = (data?.[3]?.result as bigint | undefined) ?? 0n;
@@ -126,7 +134,7 @@ export function useMegapotLeg() {
       // `totalBridged` counts the agent's own outbound `bridgeHome`, which is the return leg.
       { address: addresses.usdcBase, abi: erc20Abi, functionName: "balanceOf", args: [addresses.ticketAgent], chainId: BASE_SEPOLIA_ID },
     ],
-    query: { refetchInterval: REFRESH, enabled },
+    query: { refetchInterval: REFRESH, refetchIntervalInBackground: false, enabled },
   });
 
   const heldBps = data?.[2]?.result as bigint | undefined;
