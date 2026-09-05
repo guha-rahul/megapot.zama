@@ -85,6 +85,11 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
     ///         `claim`. A deposit that would exceed it compacts the depositor's ranges into one.
     uint256 public constant MAX_RANGES = 4;
 
+    /// @notice The prize every depositor plays, funded by the pool's yield.
+    uint8 public constant MAIN = 0;
+    /// @notice The opt-in prize, funded by winnings returning from Megapot on Base.
+    uint8 public constant MEGA = 1;
+
     // --------------------------------------------------------------------- //
     //                               Types                                    //
     // --------------------------------------------------------------------- //
@@ -123,6 +128,24 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
         uint64 round; // first round this range is eligible for
     }
 
+    /// @notice One independent prize game: its own ticket space, rounds and reserve.
+    ///
+    /// @dev    Two tracks run over a single balance ledger. `MAIN` includes every depositor and is
+    ///         funded by yield; `MEGA` includes only those who opted in and is funded by winnings
+    ///         coming back from Megapot on Base. Being in `MEGA` is purely additive — it never
+    ///         removes you from `MAIN`, so opting in cannot cost you anything but gas.
+    ///
+    ///         Both tracks run the *same* selection code, just indexed. That is deliberate: the
+    ///         confidential draw is the part worth getting right once.
+    struct Track {
+        euint64 cursor; // encrypted running ticket cursor
+        uint64 entryRound; // round tag stamped on new entries
+        uint64 settledTickets; // revealed ticket total as of the last finalizeEntries
+        uint64 settledAt; // when that reveal happened — see `_megapotEligible`
+        uint64 prizeReserve; // cUSDC held as this track's next prize
+        Round[] rounds;
+    }
+
     // --------------------------------------------------------------------- //
     //                            Immutables                                  //
     // --------------------------------------------------------------------- //
@@ -143,40 +166,59 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
     //                       Confidential state                               //
     // --------------------------------------------------------------------- //
 
-    /// @dev Encrypted pool balance per depositor (principal + winnings).
+    /// @dev Encrypted pool balance per depositor (principal + winnings). Shared by both tracks —
+    ///      there is exactly one ledger, and the tracks are two ways of playing it.
     mapping(address => euint64) private _balance;
-    /// @dev Encrypted ticket ranges per depositor.
-    mapping(address => Range[]) private _ranges;
-    /// @dev Encrypted running ticket cursor. Only its running total is ever revealed.
-    euint64 private _cursor;
+    /// @dev Encrypted ticket ranges per depositor, per track.
+    mapping(uint8 => mapping(address => Range[])) private _ranges;
     /// @dev Encrypted cUSDC received but not yet unwrapped into the yield source.
     euint64 private _pendingDeploy;
     /// @dev Last amount actually paid out to a depositor, so they can check a partial fill.
     mapping(address => euint64) private _lastWithdrawn;
+    /// @dev What a depositor was awarded by a round. Readable only by them, and present for
+    ///      everyone who claimed — losers hold a handle that decrypts to zero, which is what keeps
+    ///      the mere existence of an award from identifying the winner.
+    mapping(uint8 => mapping(uint256 => mapping(address => euint64))) private _award;
 
     // --------------------------------------------------------------------- //
     //                          Public state                                  //
     // --------------------------------------------------------------------- //
 
-    Round[] private _rounds;
-    /// @notice Round tag stamped on new entries. Ranges are eligible for round `r` iff `round <= r`.
-    uint64 public entryRound;
+    /// @dev Index with `MAIN` / `MEGA`.
+    Track[2] private _tracks;
     /// @notice Underlying units currently deployed to the yield source.
     uint256 public deployedPrincipal;
-    /// @notice Harvested yield held by the pool as cUSDC, earmarked as the next prize.
-    uint64 public prizeReserve;
     /// @notice Harvested yield held as raw underlying, earmarked for Megapot ticket purchases on
     ///         Base. Never mixes with principal and never returns to it.
     uint256 public ticketBudget;
-    /// @notice Revealed ticket total as of the last `finalizeEntries`.
-    uint64 public settledTickets;
-    /// @notice Whether a depositor has already claimed a round.
-    mapping(uint256 => mapping(address => bool)) public hasClaimed;
-    /// @dev One-based `entryRound` at which a depositor last compacted their ranges. Compacting
-    ///      releases the old ranges as dead tickets, so it is rate-limited to once per round —
-    ///      otherwise anyone could re-stake in a loop and inflate the ticket space until almost
-    ///      every draw rolled over.
-    mapping(address => uint64) private _lastCompactRound;
+    /// @notice Whether a depositor has already claimed a round of a track.
+    mapping(uint8 => mapping(uint256 => mapping(address => bool))) public hasClaimed;
+    /// @dev One-based `entryRound` at which a depositor last reshaped their ranges on a track.
+    ///      Reshaping releases the old ranges as dead tickets, so it is rate-limited to once per
+    ///      round — otherwise anyone could re-stake in a loop and inflate the ticket space until
+    ///      almost every draw rolled over. Opting in and out of `MEGA` shares this limit for the
+    ///      same reason.
+    mapping(uint8 => mapping(address => uint64)) private _lastCompactRound;
+
+    /// @notice Whether a depositor plays the Megapot-funded track as well as the main one.
+    ///
+    /// @dev    Public on purpose. It leaks a *preference*, never an amount: an observer learns
+    ///         that you are playing the second game, not how much you have in either. Making it
+    ///         encrypted would mean the ticket ratio in `harvest` could not be computed in the
+    ///         clear, and that ratio is the only thing keeping the split fair.
+    mapping(address => bool) public playsMegapot;
+
+    /// @notice Underlying the pool aims to keep un-deployed so withdrawals always settle at once.
+    ///         `topUpBuffer` is permissionless, so a shortfall is repairable by anyone.
+    uint256 public bufferTarget;
+
+    /// @notice How far apart the two tracks' ticket reveals may be before `harvest` stops trusting
+    ///         their ratio and routes nothing to Megapot.
+    ///
+    /// @dev    `settledTickets` is written per track, independently, by `finalizeEntries`. A MAIN
+    ///         reveal from January against a MEGA reveal from June is not a ratio, it is noise.
+    ///         Rather than divide two unrelated snapshots, refuse the split and say so.
+    uint64 public splitMaxSkew = 7 days;
 
     bool public depositsPaused;
 
@@ -185,9 +227,12 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
     // --------------------------------------------------------------------- //
     //
     // The lottery the prize is played on lives on Base; this pool lives where FHE works. These
-    // three fields are the whole seam. `megapotSpendBps` defaults to zero: routing yield through
-    // an external lottery is a deliberate financial choice with a real house edge, so it is opt-in
-    // rather than something a deployer gets by accident.
+    // three fields are the whole seam.
+    //
+    // There is deliberately no governance-level "spend N% of yield on Megapot" knob. Each
+    // depositor sets their own allocation, and the harvest ratio is already the stake-weighted
+    // average of those choices — a second global multiplier would mean the same thing twice, and
+    // would let governance quietly override a choice that is the depositor's to make.
 
     /// @notice CCTP TokenMessengerV2 on this chain, or zero if the Megapot leg is not wired.
     ITokenMessengerV2 public bridge;
@@ -195,8 +240,6 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
     uint32 public megapotDomain;
     /// @notice `MegapotTicketAgent` on that chain, left-padded to bytes32.
     bytes32 public ticketAgent;
-    /// @notice Share of each harvest routed to Megapot tickets instead of straight to the prize.
-    uint16 public megapotSpendBps;
 
     // --------------------------------------------------------------------- //
     //                              Events                                    //
@@ -207,23 +250,31 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
     event Deposited(address indexed user, uint256 rangeIndex);
     event Restaked(address indexed user);
     event Withdrawn(address indexed user);
-    event RoundStarted(uint256 indexed roundId, uint64 drawTime);
-    event EntriesClosed(uint256 indexed roundId, euint64 cursorSnapshot);
-    event EntriesFinalized(uint256 indexed roundId, uint64 totalTickets);
-    event Drawn(uint256 indexed roundId, uint64 prize, uint64 totalTickets);
-    event Claimed(uint256 indexed roundId, address indexed user);
-    event SweepRequested(uint256 indexed roundId, euint64 unclaimed);
-    event Swept(uint256 indexed roundId, uint64 rolledOver);
+    event RoundStarted(uint8 indexed track, uint256 indexed roundId, uint64 drawTime);
+    event EntriesClosed(uint8 indexed track, uint256 indexed roundId, euint64 cursorSnapshot);
+    event EntriesFinalized(uint8 indexed track, uint256 indexed roundId, uint64 totalTickets);
+    event Drawn(uint8 indexed track, uint256 indexed roundId, uint64 prize, uint64 totalTickets);
+    event Claimed(uint8 indexed track, uint256 indexed roundId, address indexed user);
+    event SweepRequested(uint8 indexed track, uint256 indexed roundId, euint64 unclaimed);
+    event Swept(uint8 indexed track, uint256 indexed roundId, uint64 rolledOver);
+    event MegapotOptIn(address indexed user);
+    event MegapotOptOut(address indexed user);
+    event BufferTargetSet(uint256 target);
     event DeployRequested(bytes32 indexed unwrapRequestId);
     event Invested(uint256 amount);
     event Harvested(uint256 surplus, uint64 toPrize, uint256 toTickets);
     event MegapotRouteSet(address bridge, uint32 domain, bytes32 agent);
-    event MegapotSpendSet(uint16 bps);
+    event MegapotAllocationSet(address indexed user, uint16 bps);
     event BridgedToMegapot(uint256 amount);
-    event PrizeFunded(address indexed from, uint256 amount, uint64 minted);
+    event PrizeFunded(uint8 indexed track, address indexed from, uint256 amount, uint64 minted);
     event TicketBudgetFunded(address indexed from, uint256 amount);
     event BufferRefilled(uint256 amount);
     event ConfigUpdated();
+
+    /// @notice `harvest` declined to route anything to Megapot. `reason` is 0 when a track has
+    ///         never settled, 1 when the two reveals are further apart than `splitMaxSkew`.
+    /// @dev    Emitted rather than reverted on purpose — see `_megapotEligible`.
+    event SplitSkipped(uint8 reason);
 
     // --------------------------------------------------------------------- //
     //                              Errors                                    //
@@ -248,9 +299,18 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
     error BudgetExceeded();
     error InvalidConfig();
     error ZeroAmountFunded();
+    error UnknownTrack();
+    error AlreadyOptedIn();
+    error NotOptedIn();
+    error BufferFull();
 
     modifier onlyKeeper() {
         if (msg.sender != keeper && msg.sender != owner()) revert OnlyKeeper();
+        _;
+    }
+
+    modifier validTrack(uint8 track) {
+        if (track > MEGA) revert UnknownTrack();
         _;
     }
 
@@ -259,8 +319,10 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
         asset = IERC20(cToken_.underlying());
         keeper = keeper_;
 
-        _cursor = FHE.asEuint64(0);
-        FHE.allowThis(_cursor);
+        _tracks[MAIN].cursor = FHE.asEuint64(0);
+        FHE.allowThis(_tracks[MAIN].cursor);
+        _tracks[MEGA].cursor = FHE.asEuint64(0);
+        FHE.allowThis(_tracks[MEGA].cursor);
         _pendingDeploy = FHE.asEuint64(0);
         FHE.allowThis(_pendingDeploy);
     }
@@ -291,24 +353,37 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
         _pendingDeploy = FHE.add(_pendingDeploy, received);
         FHE.allowThis(_pendingDeploy);
 
+        // Folding a full range list deletes the ranges, so settle any pending win first —
+        // guarded on the list actually being full, so an ordinary deposit pays nothing for a
+        // claim it does not need.
+        if (
+            _ranges[MAIN][msg.sender].length >= MAX_RANGES ||
+            (playsMegapot[msg.sender] && _ranges[MEGA][msg.sender].length >= MAX_RANGES)
+        ) {
+            _settleClaims(msg.sender);
+        }
+
         // Keep the range list bounded: fold everything into one range when it is full, so a
         // frequent depositor never makes `claim`/`withdraw` unboundedly expensive. Folding is
         // rate-limited, so a depositor gets a handful of deposits per round before they have to
         // wait for the next one.
-        if (_ranges[msg.sender].length >= MAX_RANGES) {
-            _compact(msg.sender);
-        } else {
-            _allocate(msg.sender, received);
-        }
+        _grow(MAIN, msg.sender, received);
+        // The Megapot track mirrors the main one for anyone who opted in, so one deposit buys
+        // tickets in both games at once.
+        if (playsMegapot[msg.sender]) _grow(MEGA, msg.sender, received);
 
-        emit Deposited(msg.sender, _ranges[msg.sender].length - 1);
+        emit Deposited(msg.sender, _ranges[MAIN][msg.sender].length - 1);
     }
 
     /// @notice Re-issue your tickets so they cover your **whole** current balance, folding in any
     ///         prizes you have won. Your previous ranges are released (they become dead tickets).
     /// @dev    Once per round — see `_compact`.
     function restake() external nonReentrant {
-        _compact(msg.sender);
+        // Settle first — `_compact` deletes every range, so an unclaimed win would go with them.
+        _settleClaims(msg.sender);
+
+        _compact(MAIN, msg.sender);
+        if (playsMegapot[msg.sender]) _compact(MEGA, msg.sender);
         emit Restaked(msg.sender);
     }
 
@@ -320,8 +395,14 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
     ///         calls `refillBuffer`.
     ///
     ///         Withdrawing shrinks your ticket ranges from the top by exactly the amount paid.
-    ///         Claim any pending round *before* withdrawing.
+    ///         Any round you have won but not claimed is settled first, so the prize is already
+    ///         in your balance before the cap applies — withdrawing everything takes the winnings
+    ///         with it.
     function withdraw(externalEuint64 encAmount, bytes calldata proof) external nonReentrant {
+        // Settle first, so a pending win is in the balance this withdrawal caps against — and so
+        // shrinking the ranges below cannot destroy the range that won it.
+        _settleClaims(msg.sender);
+
         euint64 want = FHE.fromExternal(encAmount, proof);
         euint64 balance = _balance[msg.sender];
 
@@ -337,9 +418,54 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
         FHE.allowThis(sent);
         FHE.allow(sent, msg.sender);
 
-        _releaseTickets(msg.sender, sent);
+        _releaseTickets(MAIN, msg.sender, sent);
+        if (playsMegapot[msg.sender]) _releaseTickets(MEGA, msg.sender, sent);
 
         emit Withdrawn(msg.sender);
+    }
+
+    // ===================================================================== //
+    //                         Megapot opt-in                                //
+    // ===================================================================== //
+
+    /// @notice Also play the Megapot-funded prize, on top of the main one.
+    ///
+    /// @dev    Opting in mints you a ticket range on the `MEGA` cursor covering your *current*
+    ///         balance. It is purely additive: your main-track tickets are untouched, so opting in
+    ///         cannot reduce your odds on the main prize or put your principal at risk. What it
+    ///         does cost is that your share of harvested yield is routed to buying Megapot tickets
+    ///         instead of straight into the main prize — see `harvest`.
+    ///
+    ///         Deposits made after this point mirror onto both tracks automatically. Winnings
+    ///         credited by a claim do not, on either track; fold them in with `restake`.
+    function optIn() external nonReentrant {
+        if (playsMegapot[msg.sender]) revert AlreadyOptedIn();
+        playsMegapot[msg.sender] = true;
+
+        _compact(MEGA, msg.sender);
+
+        emit MegapotOptIn(msg.sender);
+    }
+
+    /// @notice Stop playing the Megapot prize. Your main-track position is untouched.
+    ///
+    /// @dev    Your `MEGA` ranges are dropped, which leaves dead tickets in that space exactly as
+    ///         a withdrawal would — so a `MEGA` draw may roll over. Leaving is always allowed; it
+    ///         is re-joining that costs a reshape, and `optIn` is where the rate limit sits.
+    function optOut() external nonReentrant {
+        if (!playsMegapot[msg.sender]) revert NotOptedIn();
+        playsMegapot[msg.sender] = false;
+
+        // Dropping the ranges is all that is needed: the cursor never rewinds, so the positions
+        // they covered simply become dead. Shrinking them first would burn FHE gas to reach the
+        // same state.
+        //
+        // Deliberately *not* rate-limited. Inflating the ticket space requires minting, and only
+        // `optIn` mints — capping that is what closes the loop. Charging opt-out for the privilege
+        // of leaving would just trap people in a game they no longer want to play.
+        delete _ranges[MEGA][msg.sender];
+
+        emit MegapotOptOut(msg.sender);
     }
 
     // ===================================================================== //
@@ -348,47 +474,58 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
 
     /// @notice Open a new round. Entries accumulate continuously — a depositor from an earlier
     ///         round keeps their tickets and automatically plays this one too.
-    function startRound(uint64 drawTime) external onlyKeeper returns (uint256 roundId) {
-        uint256 n = _rounds.length;
+    function startRound(uint8 track, uint64 drawTime)
+        external
+        onlyKeeper
+        validTrack(track)
+        returns (uint256 roundId)
+    {
+        Track storage t = _tracks[track];
+        uint256 n = t.rounds.length;
         if (n > 0) {
-            RoundState prev = _rounds[n - 1].state;
+            RoundState prev = t.rounds[n - 1].state;
             // The previous round must at least be drawn before the next one opens; its sweep may
             // still be in flight.
             if (prev != RoundState.Claimable && prev != RoundState.Sweeping && prev != RoundState.Settled) {
                 revert PreviousRoundLive();
             }
         }
-        if (n != entryRound) revert WrongState();
+        if (n != t.entryRound) revert WrongState();
 
-        _rounds.push();
+        t.rounds.push();
         roundId = n;
-        Round storage r = _rounds[roundId];
+        Round storage r = t.rounds[roundId];
         r.drawTime = drawTime;
         r.state = RoundState.Open;
 
-        emit RoundStarted(roundId, drawTime);
+        emit RoundStarted(track, roundId, drawTime);
     }
 
     /// @notice Stop taking entries for `roundId` and publish the encrypted cursor for decryption.
     ///         Deposits made from here on are tagged for the *next* round.
-    function closeEntries(uint256 roundId) external onlyKeeper {
-        Round storage r = _rounds[roundId];
+    function closeEntries(uint8 track, uint256 roundId) external onlyKeeper validTrack(track) {
+        Track storage t = _tracks[track];
+        Round storage r = t.rounds[roundId];
         if (r.state != RoundState.Open) revert WrongState();
 
-        r.cursorSnapshot = _cursor;
+        r.cursorSnapshot = t.cursor;
         FHE.makePubliclyDecryptable(r.cursorSnapshot);
         r.state = RoundState.Closing;
-        entryRound = uint64(roundId) + 1;
+        t.entryRound = uint64(roundId) + 1;
 
-        emit EntriesClosed(roundId, r.cursorSnapshot);
+        emit EntriesClosed(track, roundId, r.cursorSnapshot);
     }
 
     /// @notice Submit the publicly decrypted cursor total together with the KMS proof. This is
     ///         the one moment the pool's aggregate stake becomes plaintext; individual deposits
     ///         stay hidden inside it.
     /// @dev    Permissionless — the proof is what authorises the value, not the caller.
-    function finalizeEntries(uint256 roundId, uint64 totalTickets, bytes calldata decryptionProof) external {
-        Round storage r = _rounds[roundId];
+    function finalizeEntries(uint8 track, uint256 roundId, uint64 totalTickets, bytes calldata decryptionProof)
+        external
+        validTrack(track)
+    {
+        Track storage t = _tracks[track];
+        Round storage r = t.rounds[roundId];
         if (r.state != RoundState.Closing) revert WrongState();
 
         bytes32[] memory handles = new bytes32[](1);
@@ -397,23 +534,25 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
 
         r.totalTickets = totalTickets;
         r.state = RoundState.Drawable;
-        settledTickets = totalTickets;
+        t.settledTickets = totalTickets;
+        t.settledAt = uint64(block.timestamp);
 
-        emit EntriesFinalized(roundId, totalTickets);
+        emit EntriesFinalized(track, roundId, totalTickets);
     }
 
     /// @notice Draw the round: pick an encrypted winning ticket and lock in the prize.
     /// @dev    The ticket is `rand() mod totalTickets`. The modulo bias is bounded by
     ///         `totalTickets / 2^64`, i.e. below 1e-13 for any realistic pool.
-    function draw(uint256 roundId, uint64 claimWindow) external onlyKeeper {
-        Round storage r = _rounds[roundId];
+    function draw(uint8 track, uint256 roundId, uint64 claimWindow) external onlyKeeper validTrack(track) {
+        Track storage t = _tracks[track];
+        Round storage r = t.rounds[roundId];
         if (r.state != RoundState.Drawable) revert WrongState();
         if (block.timestamp < r.drawTime) revert TooEarly();
         if (r.totalTickets == 0) revert NoTickets();
 
-        uint64 prize = prizeReserve;
+        uint64 prize = t.prizeReserve;
         if (prize == 0) revert NoPrize();
-        prizeReserve = 0;
+        t.prizeReserve = 0;
 
         euint64 ticket = FHE.rem(FHE.randEuint64(), r.totalTickets);
         FHE.allowThis(ticket);
@@ -426,20 +565,30 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
         r.claimDeadline = uint64(block.timestamp) + claimWindow;
         r.state = RoundState.Claimable;
 
-        emit Drawn(roundId, prize, r.totalTickets);
+        emit Drawn(track, roundId, prize, r.totalTickets);
     }
 
     /// @notice Claim a round. Costs the same and looks the same whether or not you won — the
     ///         award is `select(hit, prize, 0)` and lands in your encrypted balance.
     /// @dev    Every depositor should call this every round: it is the only way a win is paid,
     ///         and it is what makes the winner indistinguishable from everyone else.
-    function claim(uint256 roundId) external nonReentrant {
-        Round storage r = _rounds[roundId];
+    function claim(uint8 track, uint256 roundId) external nonReentrant validTrack(track) {
+        Round storage r = _tracks[track].rounds[roundId];
         if (r.state != RoundState.Claimable) revert WrongState();
-        if (hasClaimed[roundId][msg.sender]) revert AlreadyClaimed();
-        hasClaimed[roundId][msg.sender] = true;
+        if (hasClaimed[track][roundId][msg.sender]) revert AlreadyClaimed();
+        _claim(track, roundId, msg.sender);
+    }
 
-        Range[] storage ranges = _ranges[msg.sender];
+    /// @dev The body of a claim, with the state and double-claim checks left to the caller.
+    ///
+    ///      Split out so reshaping paths can settle a pending win before they touch the ranges
+    ///      that win depends on — see `_settleClaims`. Makes no external calls, so lifting it out
+    ///      of the `nonReentrant` wrapper adds no reentrancy surface.
+    function _claim(uint8 track, uint256 roundId, address user) private {
+        Round storage r = _tracks[track].rounds[roundId];
+        hasClaimed[track][roundId][user] = true;
+
+        Range[] storage ranges = _ranges[track][user];
         euint64 ticket = r.ticket;
         euint64 award = FHE.asEuint64(0);
 
@@ -457,29 +606,39 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
         r.unclaimed = FHE.sub(r.unclaimed, award);
         FHE.allowThis(r.unclaimed);
 
-        _balance[msg.sender] = FHE.add(_balance[msg.sender], award);
-        _persistBalance(msg.sender);
+        _balance[user] = FHE.add(_balance[user], award);
+        _persistBalance(user);
 
-        emit Claimed(roundId, msg.sender);
+        // Keep the award as a handle only this claimer can read, so "what did I win?" is a direct
+        // user-decryption rather than a balance diff. Everyone who claims gets one; a loser's
+        // decrypts to zero, so holding an award handle reveals nothing about having won.
+        _award[track][roundId][user] = award;
+        FHE.allowThis(award);
+        FHE.allow(award, user);
+
+        emit Claimed(track, roundId, user);
     }
 
     /// @notice After the claim window, publish the unclaimed remainder for decryption so it can
     ///         roll over into the next round.
-    function requestSweep(uint256 roundId) external {
-        Round storage r = _rounds[roundId];
+    function requestSweep(uint8 track, uint256 roundId) external validTrack(track) {
+        Round storage r = _tracks[track].rounds[roundId];
         if (r.state != RoundState.Claimable) revert WrongState();
         if (block.timestamp < r.claimDeadline) revert TooEarly();
 
         FHE.makePubliclyDecryptable(r.unclaimed);
         r.state = RoundState.Sweeping;
 
-        emit SweepRequested(roundId, r.unclaimed);
+        emit SweepRequested(track, roundId, r.unclaimed);
     }
 
     /// @notice Submit the decrypted remainder with its KMS proof; it rolls into `prizeReserve`.
     ///         Reveals only *whether* the round was won, never by whom.
-    function finalizeSweep(uint256 roundId, uint64 unclaimedAmount, bytes calldata decryptionProof) external {
-        Round storage r = _rounds[roundId];
+    function finalizeSweep(uint8 track, uint256 roundId, uint64 unclaimedAmount, bytes calldata decryptionProof)
+        external
+        validTrack(track)
+    {
+        Round storage r = _tracks[track].rounds[roundId];
         if (r.state != RoundState.Sweeping) revert WrongState();
 
         bytes32[] memory handles = new bytes32[](1);
@@ -487,9 +646,9 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
         FHE.checkSignatures(handles, abi.encode(unclaimedAmount), decryptionProof);
 
         r.state = RoundState.Settled;
-        prizeReserve += unclaimedAmount;
+        _tracks[track].prizeReserve += unclaimedAmount;
 
-        emit Swept(roundId, unclaimedAmount);
+        emit Swept(track, roundId, unclaimedAmount);
     }
 
     // ===================================================================== //
@@ -541,15 +700,66 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
         yieldSource.withdraw(surplus, address(this));
         uint256 got = asset.balanceOf(address(this)) - before;
 
-        // Split the realised yield: part is played on Megapot, the rest becomes prize money
-        // directly. Both paths end up funding the same confidential draw.
-        uint256 toTickets = (got * megapotSpendBps) / 10_000;
+        // Split the realised yield. Only the opted-in share is eligible to be played on Megapot,
+        // and the split uses the two tracks' revealed ticket totals — public aggregates that leak
+        // nothing about any individual. This is what makes the slider honest in both directions:
+        // a depositor at 0% never funds a prize they cannot win, and one at 100% is not riding on
+        // anybody else's yield.
+        uint256 toTickets = _megapotEligible(got);
         ticketBudget += toTickets;
 
+        // Everything the Megapot leg did not take funds the main prize — including the rest of an
+        // opted-in depositor's yield, since they are still playing the main draw too.
         uint64 minted = _wrapIntoPool(got - toTickets);
-        prizeReserve += minted;
+        _tracks[MAIN].prizeReserve += minted;
 
         emit Harvested(got, minted, toTickets);
+    }
+
+    /// @dev How much of a realised harvest is eligible to be played on Megapot.
+    ///
+    ///      The ratio of the two tracks' revealed ticket totals *is* the stake-weighted average
+    ///      allocation, because every MEGA mint is its depositor's MAIN mint scaled by their
+    ///      chosen share. So this needs no separate accounting — but it does need three guards,
+    ///      and every one of them fails **closed to zero rather than reverting**:
+    ///
+    ///      `harvest` is permissionless and is the only path from yield to prize. If a Megapot
+    ///      misconfiguration could make it revert, a misconfigured second game would take the
+    ///      pool's core function down with it. Routing nothing costs opted-in depositors some
+    ///      variance; reverting costs everybody their prize.
+    ///
+    ///      The clamp on the last line is load-bearing, not defensive dressing. MEGA mints are
+    ///      not always paired with MAIN mints — raising an allocation mints on MEGA alone — so
+    ///      `megaTickets > mainTickets` is reachable, and without the clamp `got - toTickets`
+    ///      below would underflow and revert for good.
+    function _megapotEligible(uint256 got) private returns (uint256) {
+        // Nothing to play it on. Earmarking a ticket budget the pool cannot spend would strand
+        // yield that should have become a prize.
+        if (address(bridge) == address(0) || ticketAgent == bytes32(0)) {
+            emit SplitSkipped(2);
+            return 0;
+        }
+
+        Track storage main = _tracks[MAIN];
+        Track storage mega = _tracks[MEGA];
+
+        if (main.settledTickets == 0 || main.settledAt == 0 || mega.settledAt == 0) {
+            emit SplitSkipped(0);
+            return 0;
+        }
+
+        uint64 skew = main.settledAt > mega.settledAt
+            ? main.settledAt - mega.settledAt
+            : mega.settledAt - main.settledAt;
+        if (skew > splitMaxSkew) {
+            emit SplitSkipped(1);
+            return 0;
+        }
+
+        uint256 megaTickets = mega.settledTickets;
+        if (megaTickets > main.settledTickets) megaTickets = main.settledTickets;
+
+        return (got * megaTickets) / main.settledTickets;
     }
 
     // ===================================================================== //
@@ -592,13 +802,44 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
     ///         rather than sweeping the pool's own balance. That is what keeps arriving winnings
     ///         from ever being confused with freshly unwrapped deposits waiting to be invested —
     ///         principal and prize money can never cross over by accident. See `PrizeInbox`.
-    function fundPrize(uint256 amount) external returns (uint64 minted) {
+    function fundPrize(uint8 track, uint256 amount) external validTrack(track) returns (uint64 minted) {
         if (amount == 0) revert ZeroAmountFunded();
         asset.safeTransferFrom(msg.sender, address(this), amount);
         minted = _wrapIntoPool(amount);
-        prizeReserve += minted;
+        _tracks[track].prizeReserve += minted;
 
-        emit PrizeFunded(msg.sender, amount, minted);
+        emit PrizeFunded(track, msg.sender, amount, minted);
+    }
+
+    /// @notice Refill the withdrawal buffer to `bufferTarget`. **Permissionless** — this is what
+    ///         makes "withdraw at any time" hold without waiting on a keeper.
+    ///
+    /// @dev    A withdrawal pays from the pool's cUSDC buffer, and its amount is encrypted, so the
+    ///         contract cannot size a refill against any particular withdrawal. What it *can* do
+    ///         is keep a public target topped up, and let anyone repair a shortfall in the same
+    ///         block they notice it. The target is a plaintext aggregate and reveals nothing about
+    ///         who withdrew or how much.
+    function topUpBuffer() external returns (uint256 pulled) {
+        if (address(yieldSource) == address(0)) revert YieldSourceNotSet();
+
+        uint256 held = asset.balanceOf(address(this));
+        uint256 buffered = held > ticketBudget ? held - ticketBudget : 0;
+        if (buffered >= bufferTarget) revert BufferFull();
+
+        uint256 want = bufferTarget - buffered;
+        if (want > deployedPrincipal) want = deployedPrincipal;
+        if (want == 0) revert InsufficientPrincipal();
+
+        uint256 before = asset.balanceOf(address(this));
+        yieldSource.withdraw(want, address(this));
+        pulled = asset.balanceOf(address(this)) - before;
+
+        // Same partial-fill discipline as `refillBuffer`: credit what actually arrived, or the
+        // leftover principal gets mistaken for yield and paid out as a prize.
+        deployedPrincipal -= pulled;
+        _wrapIntoPool(pulled);
+
+        emit BufferRefilled(pulled);
     }
 
     /// @notice Top the withdrawal buffer back up: pull `amount` of principal out of the yield
@@ -645,15 +886,18 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
         emit MegapotRouteSet(bridge_, domain, ticketAgent);
     }
 
-    /// @notice Set the share of each harvest played on Megapot rather than paid straight out.
-    /// @dev    Deliberately opt-in and adjustable. Megapot takes `feeBps` of every ticket (3,000
-    ///         on Base mainnet at the time of writing), so this trades expected value for
-    ///         variance — steady yield becomes a chance at a much larger prize. Governance's call,
-    ///         not a default.
-    function setMegapotSpendBps(uint16 bps) external onlyOwner {
-        if (bps > 10_000) revert InvalidConfig();
-        megapotSpendBps = bps;
-        emit MegapotSpendSet(bps);
+    /// @notice Set how far apart the two tracks' ticket reveals may be before `harvest` stops
+    ///         trusting their ratio.
+    function setSplitMaxSkew(uint64 skew) external onlyOwner {
+        splitMaxSkew = skew;
+        emit ConfigUpdated();
+    }
+
+    /// @notice Set how much underlying the pool keeps un-deployed so withdrawals settle at once.
+    /// @dev    Anyone may then restore it with `topUpBuffer`; only the size is governed.
+    function setBufferTarget(uint256 target) external onlyOwner {
+        bufferTarget = target;
+        emit BufferTargetSet(target);
     }
 
     function setDepositsPaused(bool paused) external onlyKeeper {
@@ -695,24 +939,31 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
         return _lastWithdrawn[user];
     }
 
-    /// @notice Your encrypted ticket ranges — your odds, readable only by you.
-    function rangesOf(address user) external view returns (Range[] memory) {
-        return _ranges[user];
+    /// @notice What `user` was awarded by a round they claimed. Readable only by them.
+    /// @dev    Zero until they claim, and zero afterwards unless they won — so its presence says
+    ///         nothing. This is the handle the app decrypts to answer "did I win, and how much?".
+    function awardOf(uint8 track, uint256 roundId, address user) external view returns (euint64) {
+        return _award[track][roundId][user];
     }
 
-    function rangeCountOf(address user) external view returns (uint256) {
-        return _ranges[user].length;
+    /// @notice Your encrypted ticket ranges on a track — your odds, readable only by you.
+    function rangesOf(uint8 track, address user) external view returns (Range[] memory) {
+        return _ranges[track][user];
     }
 
-    /// @notice Whether `user` may still fold their ranges (via `restake`, or implicitly on a
-    ///         deposit that fills the list) during the current entry round.
-    function canCompact(address user) external view returns (bool) {
-        return _lastCompactRound[user] != entryRound + 1;
+    function rangeCountOf(uint8 track, address user) external view returns (uint256) {
+        return _ranges[track][user].length;
     }
 
-    /// @notice The encrypted ticket cursor. Its total is revealed once per round at close.
-    function cursor() external view returns (euint64) {
-        return _cursor;
+    /// @notice Whether `user` may still reshape their ranges on a track this entry round — via
+    ///         `restake`, a deposit that fills the list, or a Megapot opt-in/out.
+    function canCompact(uint8 track, address user) external view returns (bool) {
+        return _lastCompactRound[track][user] != _tracks[track].entryRound + 1;
+    }
+
+    /// @notice A track's encrypted ticket cursor. Its total is revealed once per round at close.
+    function cursor(uint8 track) external view returns (euint64) {
+        return _tracks[track].cursor;
     }
 
     /// @notice Encrypted cUSDC awaiting deployment into the yield source.
@@ -720,50 +971,161 @@ contract MegaPot is ZamaEthereumConfig, Ownable, ReentrancyGuard {
         return _pendingDeploy;
     }
 
-    function roundsLength() external view returns (uint256) {
-        return _rounds.length;
+    function roundsLength(uint8 track) external view returns (uint256) {
+        return _tracks[track].rounds.length;
     }
 
-    function getRound(uint256 roundId) external view returns (Round memory) {
-        return _rounds[roundId];
+    function getRound(uint8 track, uint256 roundId) external view returns (Round memory) {
+        return _tracks[track].rounds[roundId];
+    }
+
+    /// @notice A track's public aggregates: how many tickets are in play, what the next prize
+    ///         holds, and which round new entries are tagged for.
+    function trackInfo(uint8 track)
+        external
+        view
+        returns (uint64 entryRound_, uint64 settledTickets_, uint64 prizeReserve_, uint256 rounds_)
+    {
+        Track storage t = _tracks[track];
+        return (t.entryRound, t.settledTickets, t.prizeReserve, t.rounds.length);
+    }
+
+    /// @notice The share of the next harvest that would be routed to Megapot tickets, in bps.
+    ///
+    /// @dev    Exactly what `harvest` would compute right now, including every guard — so a zero
+    ///         here means "the split is currently switched off", and the `SplitSkipped` reason on
+    ///         the last harvest says why. The keeper and the app should show this rather than
+    ///         recomputing the ratio themselves and disagreeing with the contract.
+    function megapotShareBps() external view returns (uint16) {
+        if (address(bridge) == address(0) || ticketAgent == bytes32(0)) return 0;
+
+        Track storage main = _tracks[MAIN];
+        Track storage mega = _tracks[MEGA];
+        if (main.settledTickets == 0 || main.settledAt == 0 || mega.settledAt == 0) return 0;
+
+        uint64 skew = main.settledAt > mega.settledAt
+            ? main.settledAt - mega.settledAt
+            : mega.settledAt - main.settledAt;
+        if (skew > splitMaxSkew) return 0;
+
+        uint256 megaTickets = mega.settledTickets;
+        if (megaTickets > main.settledTickets) megaTickets = main.settledTickets;
+
+        return uint16((megaTickets * 10_000) / main.settledTickets);
+    }
+
+    /// @notice The main track's prize reserve — the headline "next prize".
+    function prizeReserve() external view returns (uint64) {
+        return _tracks[MAIN].prizeReserve;
+    }
+
+    /// @notice The main track's revealed ticket total.
+    function settledTickets() external view returns (uint64) {
+        return _tracks[MAIN].settledTickets;
+    }
+
+    /// @notice The main track's entry round.
+    function entryRound() external view returns (uint64) {
+        return _tracks[MAIN].entryRound;
+    }
+
+    /// @notice How much un-deployed underlying backs immediate withdrawals, against the target
+    ///         `topUpBuffer` restores. Public aggregates; neither reveals an individual position.
+    function bufferStatus() external view returns (uint256 buffered, uint256 target) {
+        uint256 held = asset.balanceOf(address(this));
+        buffered = held > ticketBudget ? held - ticketBudget : 0;
+        target = bufferTarget;
     }
 
     // ===================================================================== //
     //                             Internal                                  //
     // ===================================================================== //
 
-    /// @dev Allocate `amount` tickets at the top of the cursor to `user`.
-    function _allocate(address user, euint64 amount) private {
-        euint64 lower = _cursor;
+    /// @dev How many trailing rounds per track a reshape will settle on the caller's behalf.
+    ///
+    ///      Rounds go `Claimable` → `Sweeping` → `Settled`, and `requestSweep` is permissionless,
+    ///      so in practice at most one or two are ever `Claimable` at once. Three is slack.
+    uint256 public constant MAX_AUTOCLAIM = 3;
+
+    /// @dev Claim every live round `user` has not claimed, before their ranges are reshaped.
+    ///
+    ///      Withdrawing, re-staking and changing a Megapot allocation all move ticket ranges, and
+    ///      a win is decided by whether the encrypted ticket falls inside one. Reshaping first
+    ///      would silently destroy a prize the depositor had already won — invisibly, because
+    ///      everything is encrypted, so they would just see an award of zero and read it as a
+    ///      normal loss.
+    ///
+    ///      Settling first is also the better behaviour on its own terms: the award lands in
+    ///      `_balance` *before* a withdrawal caps against it, so "withdraw everything" now
+    ///      withdraws the winnings too, and `restake` folds them into the new range instead of
+    ///      throwing them away.
+    ///
+    ///      Blocking these calls while a claim is pending would have been the cheaper fix, but
+    ///      `claimWindow` is a keeper argument to `draw` — it would hand the keeper a lever to
+    ///      freeze withdrawals, and withdrawing at any time is the one guarantee this pool makes
+    ///      unconditionally.
+    function _settleClaims(address user) private {
+        for (uint8 track; track <= MEGA; ++track) {
+            Round[] storage rounds = _tracks[track].rounds;
+            uint256 n = rounds.length;
+            uint256 floor_ = n > MAX_AUTOCLAIM ? n - MAX_AUTOCLAIM : 0;
+
+            for (uint256 i = n; i > floor_; --i) {
+                uint256 id = i - 1;
+                if (rounds[id].state != RoundState.Claimable) continue;
+                if (hasClaimed[track][id][user]) continue;
+                _claim(track, id, user);
+            }
+        }
+    }
+
+    /// @dev Allocate `amount` tickets at the top of a track's cursor to `user`.
+    function _allocate(uint8 track, address user, euint64 amount) private {
+        Track storage t = _tracks[track];
+        euint64 lower = t.cursor;
         euint64 upper = FHE.add(lower, amount);
 
-        _cursor = upper;
+        t.cursor = upper;
         FHE.allowThis(lower);
         FHE.allowThis(upper);
         FHE.allow(lower, user);
         FHE.allow(upper, user);
 
-        _ranges[user].push(Range({lower: lower, upper: upper, round: entryRound}));
+        _ranges[track][user].push(Range({lower: lower, upper: upper, round: t.entryRound}));
     }
 
-    /// @dev Release every range the user holds and issue a single fresh one covering their whole
-    ///      balance. The released tickets become dead, which is why this is capped at once per
-    ///      round: repeated compaction is the one cheap way to inflate the ticket space, and an
-    ///      inflated space means most draws land on dead tickets and roll over.
-    function _compact(address user) private {
-        uint64 stamp = entryRound + 1;
-        if (_lastCompactRound[user] == stamp) revert AlreadyCompactedThisRound();
-        _lastCompactRound[user] = stamp;
+    /// @dev Add `amount` tickets, folding the user's ranges into one first if the list is full.
+    function _grow(uint8 track, address user, euint64 amount) private {
+        if (_ranges[track][user].length >= MAX_RANGES) {
+            _compact(track, user);
+        } else {
+            _allocate(track, user, amount);
+        }
+    }
 
-        delete _ranges[user];
-        _allocate(user, _balance[user]);
+    /// @dev Release every range the user holds on a track and issue a single fresh one covering
+    ///      their whole balance. The released tickets become dead, which is why this is capped at
+    ///      once per round: repeated compaction is the one cheap way to inflate the ticket space,
+    ///      and an inflated space means most draws land on dead tickets and roll over.
+    function _compact(uint8 track, address user) private {
+        _rateLimit(track, user);
+        delete _ranges[track][user];
+        _allocate(track, user, _balance[user]);
+    }
+
+    /// @dev One reshape per track per round. Opting into and out of `MEGA` shares this budget with
+    ///      compaction, because both mint dead tickets and both are otherwise free to repeat.
+    function _rateLimit(uint8 track, address user) private {
+        uint64 stamp = _tracks[track].entryRound + 1;
+        if (_lastCompactRound[track][user] == stamp) revert AlreadyCompactedThisRound();
+        _lastCompactRound[track][user] = stamp;
     }
 
     /// @dev Shrink the user's ranges from the top by `amount`, releasing exactly that many
     ///      tickets. Runs over every range because the cut point is encrypted; `MAX_RANGES`
     ///      keeps that bounded.
-    function _releaseTickets(address user, euint64 amount) private {
-        Range[] storage ranges = _ranges[user];
+    function _releaseTickets(uint8 track, address user, euint64 amount) private {
+        Range[] storage ranges = _ranges[track][user];
         euint64 remaining = amount;
 
         for (uint256 i = ranges.length; i > 0; --i) {

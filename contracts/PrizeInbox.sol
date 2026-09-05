@@ -18,8 +18,10 @@ import {MegaPot} from "./MegaPot.sol";
 ///         or prize money into principal.
 ///
 ///         So winnings land here instead. `flush()` is permissionless and has exactly one
-///         destination: `pot.fundPrize`, which pulls the USDC and wraps it into the prize
-///         reserve. There is no owner, no rescue function, no other exit.
+///         destination: `pot.fundPrize` on the **Megapot track**, which pulls the USDC and wraps
+///         it into that track's prize reserve. There is no owner, no rescue function, no other
+///         exit — and because the track is fixed at compile time, Megapot winnings can only ever
+///         become the prize the opted-in depositors are playing for.
 contract PrizeInbox {
     using SafeERC20 for IERC20;
 
@@ -35,13 +37,14 @@ contract PrizeInbox {
         asset = IERC20(pot_.asset());
     }
 
-    /// @notice Push everything held here into the pool's prize reserve. Anyone may call it.
+    /// @notice Push everything held here into the Megapot track's prize reserve. Anyone may call
+    ///         it — the destination is not the caller's to choose.
     function flush() external returns (uint256 amount) {
         amount = asset.balanceOf(address(this));
         if (amount == 0) revert NothingToFlush();
 
         asset.forceApprove(address(pot), amount);
-        pot.fundPrize(amount);
+        pot.fundPrize(pot.MEGA(), amount);
 
         emit Flushed(amount);
     }

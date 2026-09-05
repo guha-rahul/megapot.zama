@@ -2,7 +2,7 @@ import { time } from "@nomicfoundation/hardhat-network-helpers";
 import { expect } from "chai";
 import hre from "hardhat";
 
-import { USDC, decryptAs, encrypt64, publicDecrypt64 } from "./helpers";
+import { MAIN, MEGA, USDC, decryptAs, encrypt64, publicDecrypt64 } from "./helpers";
 
 const { ethers, fhevm } = hre;
 
@@ -68,20 +68,20 @@ describe("MegaPot — fairness", function () {
   async function runRound(ctx: Ctx, players: Ctx["alice"][], yieldAmount: bigint) {
     const before = await balances(ctx, players);
 
-    const roundId = Number(await ctx.pot.roundsLength());
-    await ctx.pot.connect(ctx.keeper).startRound((await time.latest()) + 10);
-    await ctx.pot.connect(ctx.keeper).closeEntries(roundId);
-    const snapshot = (await ctx.pot.getRound(roundId)).cursorSnapshot;
+    const roundId = Number(await ctx.pot.roundsLength(MAIN));
+    await ctx.pot.connect(ctx.keeper).startRound(MAIN, (await time.latest()) + 10);
+    await ctx.pot.connect(ctx.keeper).closeEntries(MAIN, roundId);
+    const snapshot = (await ctx.pot.getRound(MAIN, roundId)).cursorSnapshot;
     const entries = await publicDecrypt64(snapshot);
-    await ctx.pot.finalizeEntries(roundId, entries.value, entries.proof);
+    await ctx.pot.finalizeEntries(MAIN, roundId, entries.value, entries.proof);
 
     await ctx.usdc.mint(await ctx.vault.getAddress(), yieldAmount);
     await ctx.pot.harvest();
     const prize = await ctx.pot.prizeReserve();
 
     await time.increase(20);
-    await ctx.pot.connect(ctx.keeper).draw(roundId, DAY);
-    for (const p of players) await ctx.pot.connect(p).claim(roundId);
+    await ctx.pot.connect(ctx.keeper).draw(MAIN, roundId, DAY);
+    for (const p of players) await ctx.pot.connect(p).claim(MAIN, roundId);
 
     const after = await balances(ctx, players);
     return { prize, deltas: after.map((v, i) => v - before[i]), totalTickets: entries.value };

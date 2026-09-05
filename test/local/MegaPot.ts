@@ -2,7 +2,7 @@ import { time } from "@nomicfoundation/hardhat-network-helpers";
 import { expect } from "chai";
 import hre from "hardhat";
 
-import { USDC, decryptAs, encrypt64, eventArg, publicDecrypt64 } from "./helpers";
+import { MAIN, MEGA, USDC, decryptAs, encrypt64, eventArg, expectCustomError, publicDecrypt64 } from "./helpers";
 
 const { ethers, fhevm } = hre;
 
@@ -59,10 +59,10 @@ describe("MegaPot — confidential no-loss lottery", function () {
 
   /** Close entries for a round and submit the publicly decrypted cursor with its KMS proof. */
   async function settleEntries(ctx: Ctx, roundId: number) {
-    await ctx.pot.connect(ctx.keeper).closeEntries(roundId);
-    const round = await ctx.pot.getRound(roundId);
+    await ctx.pot.connect(ctx.keeper).closeEntries(MAIN, roundId);
+    const round = await ctx.pot.getRound(MAIN, roundId);
     const { value, proof } = await publicDecrypt64(round.cursorSnapshot);
-    await ctx.pot.finalizeEntries(roundId, value, proof);
+    await ctx.pot.finalizeEntries(MAIN, roundId, value, proof);
     return value;
   }
 
@@ -99,7 +99,7 @@ describe("MegaPot — confidential no-loss lottery", function () {
 
       expect(await balanceOf(ctx, ctx.alice)).to.equal(USDC(1_000));
 
-      const ranges = await ctx.pot.rangesOf(ctx.alice.address);
+      const ranges = await ctx.pot.rangesOf(MAIN, ctx.alice.address);
       expect(ranges.length).to.equal(1);
       const lower = await decryptAs(ranges[0].lower, ctx.potAddr, ctx.alice);
       const upper = await decryptAs(ranges[0].upper, ctx.potAddr, ctx.alice);
@@ -113,8 +113,8 @@ describe("MegaPot — confidential no-loss lottery", function () {
       await deposit(ctx, ctx.bob, USDC(3_000));
       await deposit(ctx, ctx.alice, USDC(500));
 
-      const a = await ctx.pot.rangesOf(ctx.alice.address);
-      const b = await ctx.pot.rangesOf(ctx.bob.address);
+      const a = await ctx.pot.rangesOf(MAIN, ctx.alice.address);
+      const b = await ctx.pot.rangesOf(MAIN, ctx.bob.address);
 
       expect(await decryptAs(a[0].lower, ctx.potAddr, ctx.alice)).to.equal(0n);
       expect(await decryptAs(a[0].upper, ctx.potAddr, ctx.alice)).to.equal(USDC(1_000));
@@ -137,12 +137,12 @@ describe("MegaPot — confidential no-loss lottery", function () {
       const ctx = await deploy();
       const max = Number(await ctx.pot.MAX_RANGES());
       for (let i = 0; i < max; i++) await deposit(ctx, ctx.alice, USDC(100));
-      expect(await ctx.pot.rangeCountOf(ctx.alice.address)).to.equal(max);
+      expect(await ctx.pot.rangeCountOf(MAIN, ctx.alice.address)).to.equal(max);
 
       await deposit(ctx, ctx.alice, USDC(100));
-      expect(await ctx.pot.rangeCountOf(ctx.alice.address)).to.equal(1);
+      expect(await ctx.pot.rangeCountOf(MAIN, ctx.alice.address)).to.equal(1);
 
-      const ranges = await ctx.pot.rangesOf(ctx.alice.address);
+      const ranges = await ctx.pot.rangesOf(MAIN, ctx.alice.address);
       const span =
         (await decryptAs(ranges[0].upper, ctx.potAddr, ctx.alice)) -
         (await decryptAs(ranges[0].lower, ctx.potAddr, ctx.alice));
@@ -163,7 +163,7 @@ describe("MegaPot — confidential no-loss lottery", function () {
       const handle = await ctx.pot.confidentialBalanceOf(ctx.alice.address);
       await expect(decryptAs(handle, ctx.potAddr, ctx.bob)).to.be.rejected;
 
-      const ranges = await ctx.pot.rangesOf(ctx.alice.address);
+      const ranges = await ctx.pot.rangesOf(MAIN, ctx.alice.address);
       await expect(decryptAs(ranges[0].upper, ctx.potAddr, ctx.bob)).to.be.rejected;
     });
 
@@ -174,9 +174,9 @@ describe("MegaPot — confidential no-loss lottery", function () {
       await deployToYield(ctx);
       await accrueAndHarvest(ctx, USDC(50));
       await time.increase(DAY);
-      await ctx.pot.connect(ctx.keeper).draw(0, DAY);
+      await ctx.pot.connect(ctx.keeper).draw(MAIN, 0, DAY);
 
-      const round = await ctx.pot.getRound(0);
+      const round = await ctx.pot.getRound(MAIN, 0);
       // Nobody — not even a depositor — is allowed to read the draw.
       await expect(decryptAs(round.ticket, ctx.potAddr, ctx.alice)).to.be.rejected;
     });
@@ -184,9 +184,9 @@ describe("MegaPot — confidential no-loss lottery", function () {
 
   async function startRound(ctx: Ctx) {
     const drawTime = (await time.latest()) + DAY;
-    const tx = await ctx.pot.connect(ctx.keeper).startRound(drawTime);
+    const tx = await ctx.pot.connect(ctx.keeper).startRound(MAIN, drawTime);
     await tx.wait();
-    return Number(await ctx.pot.roundsLength()) - 1;
+    return Number(await ctx.pot.roundsLength(MAIN)) - 1;
   }
 
   // ------------------------------------------------------------------- //
@@ -204,7 +204,7 @@ describe("MegaPot — confidential no-loss lottery", function () {
       const total = await settleEntries(ctx, roundId);
 
       expect(total).to.equal(USDC(7_555));
-      expect((await ctx.pot.getRound(roundId)).totalTickets).to.equal(USDC(7_555));
+      expect((await ctx.pot.getRound(MAIN, roundId)).totalTickets).to.equal(USDC(7_555));
       expect(await ctx.pot.settledTickets()).to.equal(USDC(7_555));
     });
 
@@ -215,10 +215,10 @@ describe("MegaPot — confidential no-loss lottery", function () {
       await settleEntries(ctx, round0);
 
       await deposit(ctx, ctx.bob, USDC(1_000));
-      const bobRanges = await ctx.pot.rangesOf(ctx.bob.address);
+      const bobRanges = await ctx.pot.rangesOf(MAIN, ctx.bob.address);
       expect(bobRanges[0].round).to.equal(1);
       // Round 0's modulus was frozen before Bob arrived.
-      expect((await ctx.pot.getRound(round0)).totalTickets).to.equal(USDC(1_000));
+      expect((await ctx.pot.getRound(MAIN, round0)).totalTickets).to.equal(USDC(1_000));
     });
   });
 
@@ -286,12 +286,12 @@ describe("MegaPot — confidential no-loss lottery", function () {
       const prize = await accrueAndHarvest(ctx, USDC(300));
 
       await time.increase(DAY);
-      await ctx.pot.connect(ctx.keeper).draw(roundId, DAY);
-      expect((await ctx.pot.getRound(roundId)).prize).to.equal(prize);
+      await ctx.pot.connect(ctx.keeper).draw(MAIN, roundId, DAY);
+      expect((await ctx.pot.getRound(MAIN, roundId)).prize).to.equal(prize);
       expect(await ctx.pot.prizeReserve()).to.equal(0n);
 
       for (const user of [ctx.alice, ctx.bob, ctx.carol]) {
-        await ctx.pot.connect(user).claim(roundId);
+        await ctx.pot.connect(user).claim(MAIN, roundId);
       }
 
       const balances = [
@@ -315,8 +315,8 @@ describe("MegaPot — confidential no-loss lottery", function () {
       const prize = await accrueAndHarvest(ctx, USDC(75));
 
       await time.increase(DAY);
-      await ctx.pot.connect(ctx.keeper).draw(roundId, DAY);
-      await ctx.pot.connect(ctx.alice).claim(roundId);
+      await ctx.pot.connect(ctx.keeper).draw(MAIN, roundId, DAY);
+      await ctx.pot.connect(ctx.alice).claim(MAIN, roundId);
 
       expect(await balanceOf(ctx, ctx.alice)).to.equal(USDC(2_000) + prize);
     });
@@ -329,10 +329,10 @@ describe("MegaPot — confidential no-loss lottery", function () {
       await deployToYield(ctx);
       const prize = await accrueAndHarvest(ctx, USDC(10));
       await time.increase(DAY);
-      await ctx.pot.connect(ctx.keeper).draw(roundId, DAY);
+      await ctx.pot.connect(ctx.keeper).draw(MAIN, roundId, DAY);
 
-      await ctx.pot.connect(ctx.alice).claim(roundId);
-      await expect(ctx.pot.connect(ctx.alice).claim(roundId)).to.be.revertedWithCustomError(ctx.pot, "AlreadyClaimed");
+      await ctx.pot.connect(ctx.alice).claim(MAIN, roundId);
+      await expect(ctx.pot.connect(ctx.alice).claim(MAIN, roundId)).to.be.revertedWithCustomError(ctx.pot, "AlreadyClaimed");
       expect(await balanceOf(ctx, ctx.alice)).to.equal(USDC(1_000) + prize);
     });
 
@@ -344,13 +344,13 @@ describe("MegaPot — confidential no-loss lottery", function () {
       await deployToYield(ctx);
       const prize = await accrueAndHarvest(ctx, USDC(40));
       await time.increase(DAY);
-      await ctx.pot.connect(ctx.keeper).draw(roundId, DAY);
+      await ctx.pot.connect(ctx.keeper).draw(MAIN, roundId, DAY);
 
       // Alice owns every ticket in round 0, so she wins. Bob joins afterwards and claims too;
       // his range is tagged for round 1 and must be ignored.
       await deposit(ctx, ctx.bob, USDC(1_000));
-      await ctx.pot.connect(ctx.alice).claim(roundId);
-      await ctx.pot.connect(ctx.bob).claim(roundId);
+      await ctx.pot.connect(ctx.alice).claim(MAIN, roundId);
+      await ctx.pot.connect(ctx.bob).claim(MAIN, roundId);
 
       expect(await balanceOf(ctx, ctx.alice)).to.equal(USDC(1_000) + prize);
       expect(await balanceOf(ctx, ctx.bob)).to.equal(USDC(1_000));
@@ -364,9 +364,9 @@ describe("MegaPot — confidential no-loss lottery", function () {
       await deployToYield(ctx);
       await accrueAndHarvest(ctx, USDC(10));
 
-      await expect(ctx.pot.connect(ctx.keeper).draw(roundId, DAY)).to.be.revertedWithCustomError(ctx.pot, "TooEarly");
+      await expectCustomError(() => ctx.pot.connect(ctx.keeper).draw.staticCall(MAIN, roundId, DAY), "TooEarly()");
       await time.increase(DAY);
-      await expect(ctx.pot.connect(ctx.alice).draw(roundId, DAY)).to.be.revertedWithCustomError(ctx.pot, "OnlyKeeper");
+      await expectCustomError(() => ctx.pot.connect(ctx.alice).draw.staticCall(MAIN, roundId, DAY), "OnlyKeeper()");
     });
   });
 
@@ -383,18 +383,18 @@ describe("MegaPot — confidential no-loss lottery", function () {
       await deployToYield(ctx);
       const prize = await accrueAndHarvest(ctx, USDC(60));
       await time.increase(DAY);
-      await ctx.pot.connect(ctx.keeper).draw(roundId, DAY);
+      await ctx.pot.connect(ctx.keeper).draw(MAIN, roundId, DAY);
 
       // Nobody claims.
       await time.increase(DAY + 1);
-      await ctx.pot.requestSweep(roundId);
-      const round = await ctx.pot.getRound(roundId);
+      await ctx.pot.requestSweep(MAIN, roundId);
+      const round = await ctx.pot.getRound(MAIN, roundId);
       const { value, proof } = await publicDecrypt64(round.unclaimed);
       expect(value).to.equal(prize);
 
-      await ctx.pot.finalizeSweep(roundId, value, proof);
+      await ctx.pot.finalizeSweep(MAIN, roundId, value, proof);
       expect(await ctx.pot.prizeReserve()).to.equal(prize);
-      expect((await ctx.pot.getRound(roundId)).state).to.equal(6); // Settled
+      expect((await ctx.pot.getRound(MAIN, roundId)).state).to.equal(6); // Settled
     });
 
     it("reports nothing left to roll over when the prize was won", async function () {
@@ -405,12 +405,12 @@ describe("MegaPot — confidential no-loss lottery", function () {
       await deployToYield(ctx);
       await accrueAndHarvest(ctx, USDC(60));
       await time.increase(DAY);
-      await ctx.pot.connect(ctx.keeper).draw(roundId, DAY);
-      await ctx.pot.connect(ctx.alice).claim(roundId);
+      await ctx.pot.connect(ctx.keeper).draw(MAIN, roundId, DAY);
+      await ctx.pot.connect(ctx.alice).claim(MAIN, roundId);
 
       await time.increase(DAY + 1);
-      await ctx.pot.requestSweep(roundId);
-      const { value } = await publicDecrypt64((await ctx.pot.getRound(roundId)).unclaimed);
+      await ctx.pot.requestSweep(MAIN, roundId);
+      const { value } = await publicDecrypt64((await ctx.pot.getRound(MAIN, roundId)).unclaimed);
       expect(value).to.equal(0n);
     });
 
@@ -424,22 +424,22 @@ describe("MegaPot — confidential no-loss lottery", function () {
       await deployToYield(ctx);
       const prize0 = await accrueAndHarvest(ctx, USDC(100));
       await time.increase(DAY);
-      await ctx.pot.connect(ctx.keeper).draw(r0, DAY);
-      await ctx.pot.connect(ctx.alice).claim(r0);
-      await ctx.pot.connect(ctx.bob).claim(r0);
+      await ctx.pot.connect(ctx.keeper).draw(MAIN, r0, DAY);
+      await ctx.pot.connect(ctx.alice).claim(MAIN, r0);
+      await ctx.pot.connect(ctx.bob).claim(MAIN, r0);
 
       const r1 = await startRound(ctx);
       expect(r1).to.equal(1);
       await deposit(ctx, ctx.carol, USDC(2_000));
       await settleEntries(ctx, r1);
-      expect((await ctx.pot.getRound(r1)).totalTickets).to.equal(USDC(4_000));
+      expect((await ctx.pot.getRound(MAIN, r1)).totalTickets).to.equal(USDC(4_000));
 
       await deployToYield(ctx);
       const prize1 = await accrueAndHarvest(ctx, USDC(80));
       await time.increase(DAY);
-      await ctx.pot.connect(ctx.keeper).draw(r1, DAY);
+      await ctx.pot.connect(ctx.keeper).draw(MAIN, r1, DAY);
 
-      for (const user of [ctx.alice, ctx.bob, ctx.carol]) await ctx.pot.connect(user).claim(r1);
+      for (const user of [ctx.alice, ctx.bob, ctx.carol]) await ctx.pot.connect(user).claim(MAIN, r1);
 
       const total =
         (await balanceOf(ctx, ctx.alice)) + (await balanceOf(ctx, ctx.bob)) + (await balanceOf(ctx, ctx.carol));
@@ -463,7 +463,7 @@ describe("MegaPot — confidential no-loss lottery", function () {
       expect(after - before).to.equal(USDC(400));
       expect(await balanceOf(ctx, ctx.alice)).to.equal(USDC(600));
 
-      const ranges = await ctx.pot.rangesOf(ctx.alice.address);
+      const ranges = await ctx.pot.rangesOf(MAIN, ctx.alice.address);
       const span =
         (await decryptAs(ranges[0].upper, ctx.potAddr, ctx.alice)) -
         (await decryptAs(ranges[0].lower, ctx.potAddr, ctx.alice));
@@ -481,7 +481,7 @@ describe("MegaPot — confidential no-loss lottery", function () {
 
       await withdraw(ctx, ctx.alice, USDC(600));
 
-      const ranges = await ctx.pot.rangesOf(ctx.alice.address);
+      const ranges = await ctx.pot.rangesOf(MAIN, ctx.alice.address);
       const span = async (i: number) =>
         (await decryptAs(ranges[i].upper, ctx.potAddr, ctx.alice)) -
         (await decryptAs(ranges[i].lower, ctx.potAddr, ctx.alice));
@@ -521,9 +521,9 @@ describe("MegaPot — confidential no-loss lottery", function () {
       const ctx = await deploy();
       await deposit(ctx, ctx.alice, USDC(1_000));
 
-      expect(await ctx.pot.canCompact(ctx.alice.address)).to.equal(true);
+      expect(await ctx.pot.canCompact(MAIN, ctx.alice.address)).to.equal(true);
       await ctx.pot.connect(ctx.alice).restake();
-      expect(await ctx.pot.canCompact(ctx.alice.address)).to.equal(false);
+      expect(await ctx.pot.canCompact(MAIN, ctx.alice.address)).to.equal(false);
 
       // Without this cap, re-staking in a loop would inflate the ticket space with dead tickets
       // until nearly every draw rolled over — a cheap way to stall the whole pool.
@@ -535,7 +535,7 @@ describe("MegaPot — confidential no-loss lottery", function () {
       // The next round resets it.
       const roundId = await startRound(ctx);
       await settleEntries(ctx, roundId);
-      expect(await ctx.pot.canCompact(ctx.alice.address)).to.equal(true);
+      expect(await ctx.pot.canCompact(MAIN, ctx.alice.address)).to.equal(true);
       await ctx.pot.connect(ctx.alice).restake();
     });
 
@@ -547,11 +547,11 @@ describe("MegaPot — confidential no-loss lottery", function () {
       await deployToYield(ctx);
       const prize = await accrueAndHarvest(ctx, USDC(120));
       await time.increase(DAY);
-      await ctx.pot.connect(ctx.keeper).draw(roundId, DAY);
-      await ctx.pot.connect(ctx.alice).claim(roundId);
+      await ctx.pot.connect(ctx.keeper).draw(MAIN, roundId, DAY);
+      await ctx.pot.connect(ctx.alice).claim(MAIN, roundId);
 
       await ctx.pot.connect(ctx.alice).restake();
-      const ranges = await ctx.pot.rangesOf(ctx.alice.address);
+      const ranges = await ctx.pot.rangesOf(MAIN, ctx.alice.address);
       expect(ranges.length).to.equal(1);
       const span =
         (await decryptAs(ranges[0].upper, ctx.potAddr, ctx.alice)) -
@@ -567,8 +567,8 @@ describe("MegaPot — confidential no-loss lottery", function () {
   describe("access control", function () {
     it("restricts keeper-only operations", async function () {
       const ctx = await deploy();
-      await expect(ctx.pot.connect(ctx.alice).startRound(1)).to.be.revertedWithCustomError(ctx.pot, "OnlyKeeper");
-      await expect(ctx.pot.connect(ctx.alice).closeEntries(0)).to.be.revertedWithCustomError(ctx.pot, "OnlyKeeper");
+      await expectCustomError(() => ctx.pot.connect(ctx.alice).startRound.staticCall(MAIN, 1), "OnlyKeeper()");
+      await expectCustomError(() => ctx.pot.connect(ctx.alice).closeEntries.staticCall(MAIN, 0), "OnlyKeeper()");
       await expect(ctx.pot.connect(ctx.alice).requestDeploy()).to.be.revertedWithCustomError(ctx.pot, "OnlyKeeper");
       await expect(ctx.pot.connect(ctx.alice).refillBuffer(1)).to.be.revertedWithCustomError(ctx.pot, "OnlyKeeper");
     });

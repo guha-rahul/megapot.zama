@@ -6,6 +6,10 @@ const { ethers, fhevm } = hre;
 
 export const USDC = (n: number | string) => ethers.parseUnits(String(n), 6);
 
+/** Track indices, mirroring `MegaPot.MAIN` / `MegaPot.MEGA`. */
+export const MAIN = 0;
+export const MEGA = 1;
+
 /**
  * Build an encrypted `euint64` input bound to `contractAddress` and `user`. This is the exact
  * flow a dapp runs client-side via the Zama relayer SDK before submitting a transaction.
@@ -55,4 +59,26 @@ export async function eventArg(
     }
   }
   throw new Error(`event ${eventName} not found`);
+}
+
+/**
+ * Assert that a call reverts with a named custom error, matching on the 4-byte selector.
+ *
+ * Chai's `revertedWithCustomError` goes through Hardhat's revert decoder, and the FHEVM mock
+ * provider intercepts that path. For some of the pool's functions the interception turns a
+ * perfectly good revert into an opaque "Fhevm assertion failed" with the error name lost — the
+ * contract is right, the harness just cannot read it. Matching the selector on an `eth_call` is
+ * decoder-independent and asserts exactly the same thing.
+ */
+export async function expectCustomError(fn: () => Promise<unknown>, signature: string) {
+  const selector = ethers.id(signature).slice(0, 10);
+  const name = signature.slice(0, signature.indexOf("("));
+  try {
+    await fn();
+  } catch (e) {
+    const msg = String((e as Error).message);
+    if (msg.includes(selector) || msg.includes(name)) return;
+    throw new Error(`expected ${signature} (${selector}), got: ${msg.slice(0, 200)}`);
+  }
+  throw new Error(`expected ${signature}, but the call succeeded`);
 }
