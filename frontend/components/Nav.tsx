@@ -43,6 +43,12 @@ export function Nav() {
         </div>
 
         <div className="nav-right">
+          {/* Free assets first: a wallet with no Sepolia USDC cannot do anything else here, and
+              that is the state every new visitor arrives in. Kept out of the deposit → withdraw
+              sentence above so the flow still reads as one line. */}
+          <Link href="/faucet" className="nav-link" data-active={pathname === "/faucet"}>
+            Get test assets
+          </Link>
           <span className="chip chip-mint nav-badge" title="Balances, odds and winnings are FHE ciphertexts on-chain">
             <span className="dot dot-pulse" />
             Encrypted by Zama
@@ -68,24 +74,34 @@ export function ConnectButton() {
   // wallet that handles EVM chain switching badly is otherwise stuck with no way to pick another.
   if (chainId !== poolChain.id) {
     return (
-      <span className="addr-pill">
-        <button
-          className="addr-copy"
-          style={{ color: "var(--gold)" }}
-          disabled={chain.busy}
-          onClick={() => void chain.go()}
-          title={`Requests chain ${poolChain.id} (${poolChain.name})`}
-        >
-          {chain.busy ? "Switching…" : `Switch to ${poolChain.name}`}
-        </button>
-        <button
-          className="addr-x"
-          onClick={() => disconnect()}
-          title={`Disconnect ${connector?.name ?? "wallet"} and choose another`}
-          aria-label="Disconnect and choose another wallet"
-        >
-          ×
-        </button>
+      <span className="nav-switch">
+        <span className="addr-pill">
+          <button
+            className="addr-copy"
+            style={{ color: "var(--gold)" }}
+            disabled={chain.busy}
+            onClick={() => void chain.go()}
+            title={`Requests chain ${poolChain.id} (${poolChain.name})`}
+          >
+            {chain.busy ? "Switching…" : `Switch to ${poolChain.name}`}
+          </button>
+          <button
+            className="addr-x"
+            onClick={() => disconnect()}
+            title={`Disconnect ${connector?.name ?? "wallet"} and choose another`}
+            aria-label="Disconnect and choose another wallet"
+          >
+            ×
+          </button>
+        </span>
+        {/* A switch that fails silently is worse than one that fails loudly: the button is the
+            only control a wrong-network visitor has, and some wallets reject the request from
+            inside their own UI where the page never sees a rejection dialog. */}
+        {chain.error && (
+          <span className="nav-err" role="alert">
+            {chain.error}
+          </span>
+        )}
       </span>
     );
   }

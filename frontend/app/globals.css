@@ -1569,11 +1569,15 @@ button.block {
    ====================================================================== */
 
 .lp {
-  min-height: 100vh;
   background: var(--bg);
   display: flex;
   flex-direction: column;
   padding: 0 40px;
+}
+
+/* The hero still owns the first screen; everything after it scrolls. */
+.lp-nav + .lp-mid {
+  min-height: calc(100vh - 84px);
 }
 
 .lp-nav,
@@ -1644,10 +1648,329 @@ button.block {
 }
 
 .lp-btn-lg {
-  align-self: flex-start;
-  margin-top: 38px;
   padding: 15px 32px;
   font-size: 15.5px;
+}
+
+.lp-cta {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  flex-wrap: wrap;
+  margin-top: 38px;
+}
+
+.lp-link {
+  font-size: 14.5px;
+  font-weight: 550;
+  color: var(--gold);
+}
+
+.lp-link:hover {
+  text-decoration: underline;
+}
+
+/* A scroll cue, because the fold now hides four sections rather than nothing. */
+.lp-scroll {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 64px;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  color: var(--text-faint);
+  align-self: flex-start;
+}
+
+.lp-scroll:hover {
+  color: var(--text-dim);
+}
+
+.lp-scroll svg {
+  animation: lp-nudge 2.4s var(--ease) infinite;
+}
+
+@keyframes lp-nudge {
+  0%, 62%, 100% { transform: translateY(0); }
+  80% { transform: translateY(4px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-scroll svg { animation: none; }
+}
+
+/* ---------------------------------------------------------------------
+   Scrolling explainer sections below the hero.
+   --------------------------------------------------------------------- */
+
+.lps {
+  margin: 0 -40px;
+  padding: 96px 40px;
+  border-top: 1px solid var(--line);
+}
+
+.lps-alt {
+  background: var(--surface-3);
+}
+
+.lps-end {
+  background: var(--text);
+}
+
+.lps-end .lps-h2 { color: #fff; }
+.lps-end .lps-p { color: rgba(255, 255, 255, 0.62); }
+
+.lps-in {
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.lps-tag {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+
+.lps-h2 {
+  margin: 14px 0 0;
+  font-size: clamp(27px, 3.4vw, 40px);
+  line-height: 1.14;
+  letter-spacing: -0.03em;
+  font-weight: 650;
+  max-width: 18em;
+}
+
+.lps-p {
+  margin: 16px 0 0;
+  max-width: 62ch;
+  font-size: 16.5px;
+  line-height: 1.62;
+  color: var(--text-dim);
+}
+
+.lps-note {
+  margin: 22px 0 0;
+  max-width: 68ch;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.lps-fig {
+  margin: 40px 0 0;
+}
+
+.lps-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  padding: 22px;
+}
+
+.lps-svg text { font-size: 15px; font-family: var(--font-sans), sans-serif; }
+.lps-svg-dim { fill: var(--text-dim); }
+.lps-svg-faint { fill: var(--text-faint); }
+.lps-svg-mint { fill: var(--mint); font-size: 14px !important; }
+
+.lps-cap {
+  margin: 16px 0 0;
+  max-width: 68ch;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-faint);
+}
+
+/* --- the transparent/encrypted comparison --------------------------- */
+
+.lps-cmp {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-top: 36px;
+}
+
+.lps-col {
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  padding: 18px 20px 8px;
+  min-width: 0;
+}
+
+.lps-col-h {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.lps-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+}
+
+.lps-dot-red { background: var(--danger); }
+.lps-dot-mint { background: var(--mint); }
+
+.lps-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 14px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--surface-3);
+}
+
+.lps-k {
+  font-size: 12px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lps-v {
+  font-size: 12.5px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.lps-cipher { color: var(--mint); }
+
+/* --- the loop -------------------------------------------------------- */
+
+.lps-steps {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  border: 1px solid var(--line);
+  background: var(--surface-1);
+}
+
+.lps-step {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 22px 18px;
+  border-right: 1px solid var(--line);
+}
+
+.lps-step:last-child { border-right: 0; }
+
+.lps-step-n {
+  font-size: 11.5px;
+  color: var(--gold);
+}
+
+.lps-step-t {
+  font-size: 15.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.lps-step-s {
+  font-size: 13px;
+  color: var(--text-faint);
+  line-height: 1.45;
+}
+
+.lps-lane {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 10px;
+  padding: 13px 18px;
+  border: 1px solid var(--mint-line);
+  background: var(--mint-soft);
+  font-size: 13.5px;
+  color: var(--mint);
+}
+
+.lps-lane-bar {
+  flex: 1;
+  height: 1px;
+  background: var(--mint-line);
+  min-width: 20px;
+}
+
+.lps-lane-l { font-weight: 600; white-space: nowrap; }
+.lps-lane-r { white-space: nowrap; }
+
+/* --- two chains ------------------------------------------------------ */
+
+.lps-chains {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 18px;
+}
+
+.lps-chain {
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  padding: 22px;
+}
+
+.lps-chain-h {
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.lps-chain-s {
+  margin-top: 3px;
+  font-size: 13px;
+  color: var(--gold);
+}
+
+.lps-chain-l {
+  margin: 16px 0 0;
+  padding-left: 17px;
+  font-size: 13.5px;
+  line-height: 1.85;
+  color: var(--text-dim);
+}
+
+.lps-seam {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 120px;
+}
+
+.lps-seam-svg { width: 100%; height: auto; }
+
+.lps-seam-t {
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  color: var(--gold);
+}
+
+@media (max-width: 900px) {
+  .lps-cmp { grid-template-columns: 1fr; }
+  .lps-steps { grid-template-columns: repeat(2, 1fr); }
+  .lps-step { border-bottom: 1px solid var(--line); }
+  .lps-chains { grid-template-columns: 1fr; }
+  .lps-seam { width: 100%; transform: rotate(90deg); margin: -14px 0; }
+  .lps-lane { flex-wrap: wrap; }
+  .lps-lane-r { white-space: normal; }
+}
+
+@media (max-width: 560px) {
+  .lps { padding: 60px 22px; margin: 0 -22px; }
+  .lps-steps { grid-template-columns: 1fr; }
+  .lps-svg { padding: 12px; }
+  .lps-svg text { font-size: 20px; }
+  .lps-svg-mint { font-size: 19px !important; }
 }
 
 .lp-foot {
@@ -1732,4 +2055,40 @@ button.block {
   padding-top: 14px;
   margin-top: 10px;
   border-top: 1px solid var(--line);
+}
+
+/* The one-click faucet block inside the USDC step on /faucet. */
+.drip {
+  margin-top: 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--gold-line);
+  background: var(--gold-soft);
+}
+
+.drip .row {
+  border-bottom: 0;
+  padding-top: 0;
+}
+
+/* Network-switch failure, surfaced under the nav button that caused it. */
+.nav-switch {
+  position: relative;
+  display: inline-flex;
+}
+
+.nav-err {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  width: max-content;
+  max-width: 320px;
+  padding: 10px 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--danger);
+  color: var(--text-dim);
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: left;
+  white-space: normal;
 }

@@ -2,6 +2,7 @@
 
 import { useAccount } from "wagmi";
 
+import { MAIN, MEGA } from "./contracts";
 import { useHasClaimed, type PrivateState, type PublicState } from "./usePool";
 import { poolChain } from "./wagmi";
 
@@ -33,7 +34,8 @@ export const stepNumber = (key: StepKey) => STEPS.findIndex((s) => s.key === key
  */
 export function useJourney(me: PrivateState, pool: PublicState) {
   const { isConnected, chainId } = useAccount();
-  const { hasClaimed } = useHasClaimed(pool.latestRoundId, me.address);
+  const { hasClaimed } = useHasClaimed(pool.latestRoundId, me.address, MAIN);
+  const { hasClaimed: hasClaimedMega } = useHasClaimed(pool.megaLatestRoundId, me.address, MEGA);
 
   const wrongChain = isConnected && chainId !== poolChain.id;
   const connected = isConnected && !wrongChain;
@@ -46,7 +48,27 @@ export function useJourney(me: PrivateState, pool: PublicState) {
 
   const round = pool.round;
   const roundOpen = round !== undefined && round.state === 4;
-  const claimable = roundOpen && hasClaimed === false && hasDeposited;
+
+  /**
+   * Which round the Claim step actually means.
+   *
+   * Both tracks draw on their own schedule, and the Megapot-funded one is usually the one with a
+   * live round. Hard-coding MAIN here meant a depositor who opted into MEGA and won had no button
+   * that paid them — the award existed on-chain and the app could not reach it. So the step
+   * resolves to whichever track has a drawn round this user has not claimed yet, MAIN first.
+   */
+  const megaRound = pool.megaRound;
+  const claimTarget =
+    roundOpen && hasClaimed === false && hasDeposited
+      ? { track: MAIN, roundId: pool.latestRoundId!, round: round!, name: "main prize" }
+      : megaRound !== undefined &&
+          megaRound.state === 4 &&
+          hasClaimedMega === false &&
+          me.megaRangeCount > 0
+        ? { track: MEGA, roundId: pool.megaLatestRoundId!, round: megaRound, name: "Megapot prize" }
+        : null;
+
+  const claimable = claimTarget !== null;
 
   const current: StepKey = !connected
     ? "connect"
@@ -63,7 +85,7 @@ export function useJourney(me: PrivateState, pool: PublicState) {
     setup: setupDone,
     deposit: hasDeposited,
     position: hasDeposited,
-    claim: hasClaimed === true,
+    claim: hasClaimed === true || hasClaimedMega === true,
     // Deliberately never "done". Withdrawing is not a milestone you pass but a door that stays
     // open — marking it complete would imply the opposite of what the pool guarantees.
     withdraw: false,
@@ -77,7 +99,9 @@ export function useJourney(me: PrivateState, pool: PublicState) {
     setupDone,
     hasDeposited,
     claimable,
+    claimTarget,
     hasClaimed,
+    hasClaimedMega,
     roundOpen,
     current,
     done,

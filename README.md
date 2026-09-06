@@ -54,6 +54,7 @@ the keeper key) → **Claim** and decrypt what you won → **Withdraw**, any tim
 | `PrizeInbox` | [`0xeF8AFB44460a395f753d685F61C5C8850e6F0E87`](https://sepolia.etherscan.io/address/0xeF8AFB44460a395f753d685F61C5C8850e6F0E87) |
 | `MockYieldVault` | [`0xAE4c2d6cA31e45acd1CDDe30F8de54ce4a87d478`](https://sepolia.etherscan.io/address/0xAE4c2d6cA31e45acd1CDDe30F8de54ce4a87d478) |
 | `ERC4626YieldSource` | [`0xa7eD29e0E537d27276af76E3642549Fd81Bb9eb1`](https://sepolia.etherscan.io/address/0xa7eD29e0E537d27276af76E3642549Fd81Bb9eb1) |
+| `UsdcDrip` (test faucet) | [`0xF61ff47B10C22F06Bbd9dB39dEEa4dFF80F7Ef04`](https://sepolia.etherscan.io/address/0xF61ff47B10C22F06Bbd9dB39dEEa4dFF80F7Ef04) |
 
 **Base Sepolia**
 | Contract | Address |
@@ -61,26 +62,52 @@ the keeper key) → **Claim** and decrypt what you won → **Withdraw**, any tim
 | `MegapotTicketAgent` | [`0xB3089B1Bff1555D7F7cf88DD236bbE99C4E59730`](https://sepolia.basescan.org/address/0xB3089B1Bff1555D7F7cf88DD236bbE99C4E59730) |
 | Megapot `BaseJackpot` (theirs) | [`0x6f03c7BCaDAdBf5E6F5900DA3d56AdD8FbDac5De`](https://sepolia.basescan.org/address/0x6f03c7BCaDAdBf5E6F5900DA3d56AdD8FbDac5De) |
 
-Real run against the live Zama coprocessor, relayer and KMS:
+Real run against the live Zama coprocessor, relayer and KMS — the `MEGA` track's first round,
+start to finish on Ethereum Sepolia:
 
 ```
-[2] Depositing an encrypted amount (relayer encrypts client-side)
-    pool balance 5 — a ciphertext on-chain, readable only by you
-[3] Opening a round and closing entries
-    asking the KMS to publicly decrypt the aggregate…
-    5 tickets in play (verified on-chain against a real KMS signature)
-[5] round 0 drawn — prize 1 over 5 tickets
-    winning ticket 0x47ff91d0…0500 (encrypted; nobody can read it)
-[6] 🎉 won 1 USDC — visible only to you
+RoundStarted              track 1, round 0
+EntriesClosed             cursor published for decryption
+                            0xdb9c30f9…aa36a70500
+PublicDecryptionVerified  KMS cleartext 0x3d090 → 250,000
+EntriesFinalized          0.25 USDC of tickets in play, verified on-chain
+                            against a real KMS signature
+PrizeFunded               0.5 USDC
+Drawn                     winning ticket 0xfb5769b9…aa36a70500
+                            encrypted, and never decrypted by anyone
+Claimed                   same call, same gas, won or lost
+SweepRequested            unclaimed amount published for decryption
+PublicDecryptionVerified  KMS cleartext 0x7a120 → 500,000
+Swept                     rolledOver 500,000 — the entire prize
 ```
 
-And on Base, real tickets in the live jackpot:
+**Nobody won, and that is the most useful thing this round demonstrates.** A withdrawal had
+already released the top half of the only depositor's range, and the cursor never rewinds — so
+half the ticket space was dead, the draw landed in the dead half, and the award handle decrypted
+to exactly `0.0`. The prize rolled into the next round.
+
+That is the dead-ticket mechanic behaving exactly as the contract documents, observed on-chain
+rather than argued from comments — and it is the clearest evidence available that the draw is not
+weighted toward the pool or the keeper. Every step is a transaction:
+[`Drawn`](https://sepolia.etherscan.io/tx/0x4a7c48bfa97141696e71bf7e8a6a9319abf07adfa9439f82d0ed2a5fa934cbe9) ·
+[`Claimed`](https://sepolia.etherscan.io/tx/0x8a20320e40cf7d64ce5e548fe0a2cc718772a140cabbe3272f81b40c27c5e420) ·
+[`Swept`](https://sepolia.etherscan.io/tx/0xcb808f58dcce708fc23e3d2fad97b7af85e8f30243d86bd67b1236ba0bac2996)
+
+On Base, the ticket agent is deployed and wired but **has not bought a ticket on this
+deployment**. Its only funding path is the bridge, and the bridge is disabled on this testnet
+pair — see [the testnet seam](#the-testnet-seam) for why. Read straight off the live jackpot:
 
 ```
-tickets held   212500 bps of 2924000     (~7.3% of the round)
-spent / won    25 / 0
-house edge     1500 bps
+jackpot.usersInfo(agent)   [0, 0, false]   no tickets, no winnings, inactive
+agent MPUSDC balance       0
+agent transaction count    1               its own deployment, and nothing since
+bridgeEnabled()            false
 ```
+
+The purchase path itself *is* verified against the live Megapot, in
+`test/live/MegapotAgent.fork.ts`: the agent buys real tickets as a contract, leaves no standing
+approval, refuses to refer itself, and claims real referral fees — against `BaseJackpot` on Base
+Sepolia, not a mock. What has never happened is a purchase funded by this pool's own yield.
 
 ---
 
@@ -149,6 +176,7 @@ principal untouched at any setting.
 | `IBaseJackpot.sol` | Megapot's interface, taken from the verified implementation. |
 | `ICCTP.sol` | Circle CCTP V2, ditto. |
 | `ERC4626YieldSource.sol` | Routes principal into any ERC-4626 vault. No arbitrary-call surface. |
+| `UsdcDrip.sol` | Testnet faucet holding a float of the pool's own USDC. Not ownable, no rescue. |
 
 ---
 
@@ -156,7 +184,7 @@ principal untouched at any setting.
 
 ```shell
 npm install
-npx hardhat test                                        # 29 — confidential mechanics
+npx hardhat test                                        # 62 — confidential mechanics
 npx hardhat --config hardhat.megapot.config.ts test     # 11 — live Base Sepolia
 ```
 
@@ -239,6 +267,7 @@ you unlock them, which is the whole point made visible:
 
 | Panel | Live data |
 | --- | --- |
+| Get test assets | ETH and USDC balances, faucet links, and a one-click on-chain USDC drip |
 | Prize hero | round #0, prize, tickets in play, state — read from Sepolia |
 | Deposit & play | guided wrap → authorise → deposit, then withdraw / claim |
 | Your position | balance, tickets, win chance — ciphertext until you decrypt |
@@ -249,6 +278,33 @@ the only way to learn the outcome is to decrypt your own balance.
 
 Verified at 390 / 768 / 1280px: no horizontal overflow, no console errors, and
 `crossOriginIsolated === true` (the Zama WASM needs it).
+
+---
+
+## Running it unattended
+
+`startRound`, `closeEntries` and `draw` are `onlyKeeper`. Everything else in the lifecycle —
+`finalizeEntries`, `finalizeSweep`, `requestSweep`, `claim`, `harvest`, `topUpBuffer` — is
+permissionless, so a keeper is a **scheduler, not a custodian**: if it stops, deposits and
+withdrawals keep working and anyone can finish a round already in flight.
+
+[`keeper/`](./keeper) is a systemd service that drives the lifecycle. It decides what the next
+action is and runs the matching Hardhat task, reusing the KMS round-trips that are already
+exercised here rather than reimplementing them.
+
+**Its schedule comes from Megapot, not from us.** Every time it opens a round it reads
+`roundDurationInSeconds()` and `lastJackpotEndTime()` off the live jackpot on Base, so the
+confidential draw settles in step with the jackpot that funds it — daily on Base mainnet, five
+minutes on Base Sepolia — with no constant baked into this repository. `ROUND_SECONDS` and
+`CLAIM_SECONDS` survive only as fallbacks for when that Base read fails; a dead endpoint on one
+chain should not stop the pool drawing on the other.
+
+It never funds a prize and never moves principal. A drawable round with an empty reserve is
+logged and skipped, because how much money goes into a prize is not a decision to automate.
+
+Give it its own key. The deployer is both `keeper` and `owner`, and owner can re-point the
+Megapot route and sweep the ticket agent — so `megapot:set-keeper` hands the scheduling role to a
+fresh address whose only power is timing. [Install →](./keeper/README.md)
 
 ---
 
@@ -278,10 +334,18 @@ utilisation on a couple of dozen dollars of liquidity and uses its own test toke
 it would produce a demo that reverts rather than one that works.
 
 So the deployment includes a **`MockYieldVault`** — a plain ERC-4626 vault — wired through
-`ERC4626YieldSource`. This is not a stub standing in for the yield path; it *is* the yield path,
-executing for real on a public testnet: `invest()` deploys principal into it, `harvest()` pulls
-only the surplus above `deployedPrincipal`, and `topUpBuffer()` pulls principal back when the
-withdrawal buffer runs short. All three run on-chain and can be watched.
+`ERC4626YieldSource`. `setYieldSource` is set, so `invest()`, `harvest()` and `topUpBuffer()`
+resolve rather than reverting `YieldSourceNotSet`, and all three are covered by the test suite.
+
+**None of them has run on this deployment.** `deployedPrincipal` is 0, no `Invested` or
+`Harvested` event has ever been emitted by this pool, and no yield has ever been realised here.
+Both prizes currently in the pool were funded directly by the operator with `fundPrize()` — 3.0
+USDC on `MAIN` and 0.5 USDC on `MEGA`, both on-chain as `PrizeFunded(from = keeper)`.
+
+That makes the prize reserve **admin-funded**, which is the mock the brief names explicitly. The
+yield path is implemented and tested; it is not yet exercised on-chain. Running it end to end is
+`requestDeploy` → `finalizeUnwrap` → `invest`, then minting USDC into the vault to simulate an
+accrual, then `harvest` — see [TODO](./TODO.md).
 
 **Swapping in a real venue is one argument and no contract change:**
 

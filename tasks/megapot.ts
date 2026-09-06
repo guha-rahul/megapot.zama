@@ -299,6 +299,26 @@ task("megapot:refill", "Top up the confidential withdrawal buffer")
 //                                  Status                                      //
 // --------------------------------------------------------------------------- //
 
+task("megapot:set-keeper", "Hand the keeper role to another address")
+  .addParam("address", "The new keeper", undefined, types.string)
+  .setAction(async (args, hre) => {
+    const p = await pot(hre);
+    const next = hre.ethers.getAddress(args.address);
+    const before = await p.keeper();
+    const owner = await p.owner();
+    const [me] = await hre.ethers.getSigners();
+
+    // Only the owner may reassign the role, and the point of reassigning it is to stop using the
+    // owner key as the keeper — so say plainly which key is being kept and which is being retired.
+    if (me.address.toLowerCase() !== owner.toLowerCase()) {
+      throw new Error(`only the owner (${owner}) can set the keeper; you are ${me.address}`);
+    }
+
+    await (await p.setKeeper(next)).wait();
+    console.log(`keeper ${before} -> ${await p.keeper()}`);
+    console.log(`owner stays ${owner} — the new keeper can schedule rounds and nothing else`);
+  });
+
 task("megapot:status", "Show the pool's public state").setAction(async (_args, hre) => {
   const p = await pot(hre);
   const rounds = Number(await p.roundsLength(0));

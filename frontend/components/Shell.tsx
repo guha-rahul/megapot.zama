@@ -164,6 +164,7 @@ function Footer() {
         public testnets; do not use with real funds.
       </div>
       <div className="addr-list">
+        <Link href="/faucet">Get test assets</Link>
         <Link href="/setup">Setup</Link>
         <Link href="/bridge">Megapot</Link>
         <Link href="/privacy">What&apos;s encrypted</Link>

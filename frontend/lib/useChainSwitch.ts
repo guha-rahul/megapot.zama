@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { useSwitchChain, useWalletClient } from "wagmi";
+import { useAccount, useSwitchChain, useWalletClient } from "wagmi";
 
 import { readableError } from "./format";
 import { poolChain } from "./wagmi";
@@ -17,17 +17,37 @@ import { poolChain } from "./wagmi";
 export function useChainSwitch() {
   const { switchChainAsync, isPending } = useSwitchChain();
   const { data: walletClient } = useWalletClient();
+  const { chainId: current } = useAccount();
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
   const go = useCallback(async () => {
     setError(null);
+
+    // Asking a wallet to switch to the chain it is already on is a no-op at best and, in some
+    // MetaMask builds, an internal error. Nothing to do here either way.
+    if (current === poolChain.id) return;
+
     try {
       await switchChainAsync({ chainId: poolChain.id });
       return;
     } catch (e) {
       const code = (e as { code?: number })?.code;
       const unknownChain = code === 4902 || /unrecognized|unknown chain|not added/i.test(String(e));
+
+      // Some wallet builds throw from inside their own UI rather than returning an EIP-1193
+      // error — the observed case is MetaMask failing to resolve the requesting origin after the
+      // dapp moved to a different port, which surfaces as a TypeError about `origin` with no app
+      // frames in the stack. Nothing the page does can fix that, so say what will.
+      if (/reading 'origin'|Cannot read propert|undefined is not an object/i.test(String(e))) {
+        setError(
+          `Your wallet could not handle the switch request. Change the network to ${poolChain.name} ` +
+            "in the wallet itself, then reload. If it persists, remove this site from the wallet's " +
+            "connected sites and connect again.",
+        );
+        return;
+      }
+
       if (!unknownChain || !walletClient) {
         setError(readableError(e));
         return;
@@ -44,7 +64,7 @@ export function useChainSwitch() {
     } finally {
       setAdding(false);
     }
-  }, [switchChainAsync, walletClient]);
+  }, [switchChainAsync, walletClient, current]);
 
   return { go, busy: isPending || adding, error, target: poolChain };
 }

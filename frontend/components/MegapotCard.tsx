@@ -2,6 +2,7 @@
 
 import { BASE_SEPOLIA_ID, addresses, explorerLink, hasMegapotLeg } from "../lib/contracts";
 import { formatCountdown, formatUsdc, shortAddress } from "../lib/format";
+import { humanDuration } from "../lib/timing";
 import type { MegapotLeg, PublicState } from "../lib/usePool";
 import { useNow } from "../lib/usePool";
 
@@ -57,7 +58,17 @@ export function MegapotCard({ leg, pool }: { leg: MegapotLeg; pool: PublicState 
       </div>
       <div className="row">
         <span className="row-k">Megapot round settles</span>
-        <span className="row-v num">{roundEnds ? formatCountdown(roundEnds, now) : "—"}</span>
+        {/* `formatCountdown` collapses everything already past into "now", which is right for a
+            draw about to happen and wrong for this: Base Sepolia's jackpot round ended months ago
+            and never rolled, so "now" claimed an imminent settlement that will never arrive.
+            A dormant round should read as dormant. */}
+        <span className="row-v num">
+          {roundEnds === undefined || roundEnds === 0
+            ? "—"
+            : roundEnds > now
+              ? formatCountdown(roundEnds, now)
+              : `ended ${humanDuration(now - roundEnds)} ago`}
+        </span>
       </div>
       <div className="row">
         <span className="row-k" title="Megapot's cut of every ticket purchased">

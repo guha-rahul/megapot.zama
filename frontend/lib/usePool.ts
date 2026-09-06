@@ -56,6 +56,7 @@ export function usePublicState() {
       { ...base, functionName: "depositsPaused" },
       { ...base, functionName: "megapotShareBps" },
       { ...base, functionName: "ticketBudget" },
+      { ...base, functionName: "roundsLength", args: [MEGA] },
     ],
     query: { refetchInterval: REFRESH, refetchIntervalInBackground: false, enabled },
   });
@@ -68,6 +69,19 @@ export function usePublicState() {
     functionName: "getRound",
     args: latestRoundId !== undefined ? [MAIN, latestRoundId] : undefined,
     query: { enabled: enabled && latestRoundId !== undefined, refetchInterval: REFRESH },
+  });
+
+  // The two tracks run independent lifecycles — separate rounds, reserves and ticket totals — so
+  // reading only MAIN made every MEGA round invisible to the app, including drawn ones a
+  // depositor still had to claim. Both are published here; pages pick the one they mean.
+  const megaRoundsLength = (data?.[8]?.result as bigint | undefined) ?? 0n;
+  const megaLatestRoundId = megaRoundsLength > 0n ? megaRoundsLength - 1n : undefined;
+
+  const { data: megaRound, refetch: refetchMegaRound } = useReadContract({
+    ...base,
+    functionName: "getRound",
+    args: megaLatestRoundId !== undefined ? [MEGA, megaLatestRoundId] : undefined,
+    query: { enabled: enabled && megaLatestRoundId !== undefined, refetchInterval: REFRESH },
   });
 
   // A chain read that fails is not the same as one that returned nothing, and the app has to be
@@ -91,9 +105,13 @@ export function usePublicState() {
     ticketBudget: data?.[7]?.result as bigint | undefined,
     latestRoundId,
     round: round as RoundView | undefined,
+    megaRoundsLength,
+    megaLatestRoundId,
+    megaRound: megaRound as RoundView | undefined,
     refetch: () => {
       void refetch();
       void refetchRound();
+      void refetchMegaRound();
     },
   };
 }
@@ -398,6 +416,7 @@ export function usePrivateState() {
       isOperator: isOperator as boolean | undefined,
       hasWrapped: walletHandle !== undefined && walletHandle !== "0x" + "0".repeat(64),
       rangeCount: ((ranges ?? []) as readonly unknown[]).length,
+      megaRangeCount: ((megaRanges ?? []) as readonly unknown[]).length,
       revealed: session !== null,
       busy,
       error,
@@ -419,6 +438,7 @@ export function usePrivateState() {
       isOperator,
       walletHandle,
       ranges,
+      megaRanges,
       session,
       busy,
       error,

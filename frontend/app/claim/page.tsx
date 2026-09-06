@@ -6,7 +6,7 @@ import { useAccount } from "wagmi";
 import { Countdown, EtaBadge, Guard } from "../../components/Guard";
 import { Shell } from "../../components/Shell";
 import { TxStatus } from "../../components/TxStatus";
-import { MAIN, addresses, megaPotAbi } from "../../lib/contracts";
+import { MEGA, addresses, megaPotAbi } from "../../lib/contracts";
 import { formatUsdc } from "../../lib/format";
 import { ETA } from "../../lib/timing";
 import { stepNumber, useJourney } from "../../lib/useJourney";
@@ -29,7 +29,15 @@ export default function ClaimPage() {
   const { run, state, setState, busy } = useTx();
   const [outcome, setOutcome] = useState<{ won: boolean; amount: bigint } | null>(null);
 
-  const round = pool.round;
+  /**
+   * The claim step follows whichever track actually has a drawn round for this user — see
+   * `useJourney`. Everything below reads off that target rather than assuming the main prize.
+   */
+  const target = journey.claimTarget;
+  const round = target?.round ?? pool.round;
+  const roundId = target?.roundId ?? pool.latestRoundId;
+  const label =
+    roundId === undefined ? "—" : `#${String(roundId)}${target?.track === MEGA ? " · Megapot" : ""}`;
 
   /**
    * The claim writes an award handle for *every* claimer, readable only by them, and a loser's
@@ -40,8 +48,9 @@ export default function ClaimPage() {
    * decrypt one, says nothing about whether you won.
    */
   const claim = async () => {
+    if (!target) return;
     await run(
-      `Claiming round #${pool.latestRoundId}`,
+      `Claiming round ${label}`,
       async () => {
         const { getWalletClient } = await import("../../lib/clients");
         const wc = await getWalletClient();
@@ -49,14 +58,14 @@ export default function ClaimPage() {
           address: addresses.megaPot,
           abi: megaPotAbi,
           functionName: "claim",
-          args: [MAIN, pool.latestRoundId!],
+          args: [target.track, target.roundId],
           chain: poolChain,
           account: address!,
         });
       },
       async () => {
         setState({ text: "Decrypting your award…", busy: true });
-        const award = await me.revealAward(MAIN, pool.latestRoundId!);
+        const award = await me.revealAward(target.track, target.roundId);
         pool.refetch();
         me.refetchHandles();
 
@@ -91,7 +100,7 @@ export default function ClaimPage() {
       <Guard journey={journey} need="position">
         <div className="card">
           <div className="card-head">
-            <h2>Round #{pool.latestRoundId !== undefined ? String(pool.latestRoundId) : "—"}</h2>
+            <h2>Round {label}</h2>
             <EtaBadge eta={ETA.tx} />
           </div>
 
@@ -124,20 +133,22 @@ export default function ClaimPage() {
             disabled={busy || !journey.claimable}
             onClick={claim}
           >
-            {journey.hasClaimed
-              ? `Already claimed round #${pool.latestRoundId}`
-              : journey.claimable
-                ? `Claim round #${pool.latestRoundId}`
+            {journey.claimable
+              ? `Claim round ${label}`
+              : journey.hasClaimed || journey.hasClaimedMega
+                ? `Already claimed round ${label}`
                 : "Nothing to claim right now"}
           </button>
 
-          {!journey.claimable && !journey.hasClaimed && (
+          {!journey.claimable && !journey.hasClaimed && !journey.hasClaimedMega && (
             <div className="status">
               {round === undefined
                 ? "No round has run yet."
                 : round.state < 4
                   ? "This round has not been drawn yet. Come back after the draw."
-                  : "You had no tickets in this round."}
+                  : me.megaRangeCount === 0 && me.rangeCount > 0
+                    ? "You had no tickets in this round. The Megapot prize is opt-in — set an allocation on Position to play it too."
+                    : "You had no tickets in this round."}
             </div>
           )}
         </div>

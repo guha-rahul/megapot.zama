@@ -1,0 +1,64 @@
+[Unit]
+Description=MegaPot keeper — opens, closes, draws and sweeps prize rounds
+Documentation=https://github.com/guha-rahul/megapot.zama
+After=network-online.target
+Wants=network-online.target
+
+# Stop flapping if it is genuinely broken, instead of retrying forever on a shared box.
+# These are [Unit] directives — systemd silently ignores them under [Service].
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# Runs as its own unprivileged user. Create it with:
+#   sudo useradd --system --create-home --shell /usr/sbin/nologin megapot
+User=megapot
+Group=megapot
+WorkingDirectory=/opt/megapot
+
+# The keeper's key and pool address live here, root-owned and readable only by this user:
+#   sudo install -o root -g megapot -m 0640 /dev/null /etc/megapot-keeper.env
+EnvironmentFile=/etc/megapot-keeper.env
+
+ExecStart=/usr/bin/node /opt/megapot/keeper/bot.mjs
+
+# The bot handles SIGTERM by finishing the tick it is on, so give it room to land a transaction
+# rather than killing it mid-broadcast.
+KillSignal=SIGTERM
+TimeoutStopSec=180
+
+Restart=on-failure
+RestartSec=30s
+
+# ---------------------------------------------------------------------------
+# Resource limits. This box runs other things; a keeper that polls a chain and
+# occasionally shells out to Hardhat should never be why one of them stalls.
+# ---------------------------------------------------------------------------
+Nice=10
+CPUWeight=20
+MemoryMax=1200M
+TasksMax=256
+
+# ---------------------------------------------------------------------------
+# Sandboxing. Mostly this protects the rest of the machine from the keeper.
+# ---------------------------------------------------------------------------
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/megapot
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=megapot-keeper
+
+[Install]
+WantedBy=multi-user.target

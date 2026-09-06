@@ -42,6 +42,8 @@ export const addresses = {
   prizeInbox: addr(process.env.NEXT_PUBLIC_PRIZE_INBOX),
   ticketAgent: addr(process.env.NEXT_PUBLIC_TICKET_AGENT),
   jackpot: addr(process.env.NEXT_PUBLIC_JACKPOT),
+  /** Optional on-page faucet holding a float of the pool's own USDC. Blank disables the button. */
+  usdcDrip: addr(process.env.NEXT_PUBLIC_USDC_DRIP),
   /** Canonical Base Sepolia USDC — what CCTP mints on arrival. */
   usdcBase: "0x036CbD53842c5426634e7929541eC2318f3dCF7e" as Address,
 };
@@ -138,4 +140,51 @@ export const jackpotAbi = [
     inputs: [],
     outputs: [{ type: "uint256" }],
   },
+] as const satisfies Abi;
+
+/**
+ * The on-page faucet (`contracts/mocks/UsdcDrip.sol`).
+ *
+ * Hand-written rather than generated: it is a five-function testnet utility that the pool itself
+ * never references, so threading it through `gen-abi.mjs` would couple the app's build to a
+ * contract the protocol does not depend on.
+ */
+export const usdcDripAbi = [
+  {
+    type: "function",
+    name: "claim",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "balance",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "amount",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "dripsLeft",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "readyAt",
+    stateMutability: "view",
+    inputs: [{ name: "user", type: "address" }],
+    outputs: [{ type: "uint256" }],
+  },
+  { type: "error", name: "Empty", inputs: [] },
+  { type: "error", name: "TooSoon", inputs: [{ name: "readyAt", type: "uint256" }] },
 ] as const satisfies Abi;

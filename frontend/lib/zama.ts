@@ -11,14 +11,33 @@ import type { Address, WalletClient } from "viem";
 const ZERO_HANDLE = "0x0000000000000000000000000000000000000000000000000000000000000000";
 
 /** The SDK reads chain state directly; keep that pinned to Sepolia regardless of wallet state. */
-import { customRpc } from "./rpc";
+import { customRpc, isUsable } from "./rpc";
 
-// The SDK reads chain config directly, so it needs the same endpoint the app is using — including
-// a viewer-supplied one, or its eip712Domain() call fails while the rest of the app works.
-const RPC_URL =
-  (typeof window !== "undefined" ? customRpc() : undefined) ??
-  process.env.NEXT_PUBLIC_RPC_URL ??
-  "https://ethereum-sepolia-rpc.publicnode.com";
+/**
+ * The SDK reads chain config directly, so it needs the same endpoint the app is using — including
+ * a viewer-supplied one, or its `eip712Domain()` call fails while the rest of the app works.
+ *
+ * Each candidate is validated rather than merely checked for existence. `??` is the wrong test
+ * here: `.env.local` ships `NEXT_PUBLIC_RPC_URL=` as a documented "leave blank for the public
+ * endpoint", Next inlines a blank as `""`, and `""` is neither null nor undefined — so nullish
+ * coalescing selects it and the SDK rejects the empty string with "Invalid network URL". Every
+ * page keeps working, because only this path needs the endpoint, so it presents as encryption
+ * being broken rather than as configuration.
+ */
+const FALLBACK_RPC = "https://ethereum-sepolia-rpc.publicnode.com";
+
+function resolveRpc(): string {
+  const candidates = [
+    typeof window !== "undefined" ? customRpc() : undefined,
+    process.env.NEXT_PUBLIC_RPC_URL,
+  ];
+  for (const url of candidates) {
+    if (typeof url === "string" && url.length > 0 && isUsable(url)) return url;
+  }
+  return FALLBACK_RPC;
+}
+
+const RPC_URL = resolveRpc();
 
 export const isZeroHandle = (handle: string) => !handle || handle === ZERO_HANDLE;
 
